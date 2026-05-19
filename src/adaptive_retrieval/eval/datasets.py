@@ -1,0 +1,182 @@
+"""Dataset loaders. Yields canonical ``Instance`` objects.
+
+IMPORTANT DEVIATION from IMPLEMENTATION_GUIDE Appendix D.1:
+  The guide says to use ``line_completion.jsonl`` (raw) as the primary file
+  because it contains the cross-file context "but no pre-retrieved chunks."
+  In the actual shipped data, the raw file has ``crossfile_context: None`` —
+  the chunks live ONLY in the rg1/oracle variants. The ``prompt`` field is
+  byte-identical across all variants, so swapping in ``rg1_bm25`` just gives
+  us a chunk list to retrieve over; it does NOT inject retrieval into the
+  prompt. This matches what CARD and Repoformer evidently did.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Iterator
+
+import jsonlines
+
+
+@dataclass
+class Instance:
+    """Canonical per-instance shape used by every config."""
+
+    x_left: str
+    x_right: str
+    ground_truth: str
+    repo_files: dict[str, str] = field(default_factory=dict)  # filename -> content
+    instance_id: str = ""
+    target_file: str = ""
+    repository: str | None = None
+
+
+# Default to the rg1_bm25 variant — it ships the chunk corpus we treat as
+# the per-instance "repository". See the module docstring for why.
+DEFAULT_CCE_PYTHON_PATH = (
+    "data/crosscodeeval/crosscodeeval_data/python/line_completion_rg1_bm25.jsonl"
+)
+
+
+def load_crosscodeeval_python(
+    path: str | Path = DEFAULT_CCE_PYTHON_PATH,
+    include_target_file: bool = True,
+) -> Iterator[Instance]:
+    """Stream Python CrossCodeEval instances.
+
+    Args:
+        path: JSONL with ``prompt``, ``right_context``, ``groundtruth``,
+            ``metadata``, and (in rg1/oracle variants) ``crossfile_context.list``.
+        include_target_file: If True, also include the current file
+            (synthesised from x_left + ground_truth + x_right) in repo_files
+            so the symbol table picks up in-file names.
+
+    Yields:
+        Instance objects.
+    """
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"CrossCodeEval JSONL not found: {p}")
+
+    with jsonlines.open(p) as reader:
+        for rec in reader:
+            meta = rec.get("metadata", {})
+            crossfile = rec.get("crossfile_context")
+            if isinstance(crossfile, dict):
+                chunks = crossfile.get("list", [])
+            elif isinstance(crossfile, list):  # tolerate the guide-shape too
+                chunks = crossfile
+            else:
+                chunks = []
+
+            repo_files: dict[str, str] = {}
+            for ch in chunks:
+                fname = ch.get("filename")
+                text = ch.get("retrieved_chunk")
+                if fname and text:
+                    # Multiple chunks may share a filename (different windows
+                    # of the same source file). Concatenate so we keep all
+                    # symbols visible in the symbol table.
+                    if fname in repo_files:
+                        repo_files[fname] += "\n" + text
+                    else:
+                        repo_files[fname] = text
+
+            target_file = meta.get("file", "current_file.py")
+            if include_target_file:
+                synthetic = (
+                    rec["prompt"] + rec["groundtruth"] + rec.get("right_context", "")
+                )
+                # If target_file already exists as a chunk source, prefer the
+                # fuller synthetic version (it has the surrounding lines too).
+                repo_files[target_file] = synthetic
+
+            yield Instance(
+                x_left=rec["prompt"],
+                x_right=rec.get("right_context", ""),
+                ground_truth=rec["groundtruth"],
+                repo_files=repo_files,
+                instance_id=meta.get("task_id", ""),
+                target_file=target_file,
+                repository=meta.get("repository"),
+            )
+
+
+# ---------- RepoEval ----------
+
+DEFAULT_REPOEVAL_BASE = Path("data/repoeval")
+
+
+def load_repoeval(
+    task: str = "line",
+    base_path: str | Path = DEFAULT_REPOEVAL_BASE,
+) -> Iterator[Instance]:
+    """Stream RepoEval Python instances.
+
+    Expects the RepoCoder data layout under ``base_path``:
+        <base_path>/datasets/<task>_level_completion_2k_context_codex.test.jsonl
+        <base_path>/repositories/<repo>/...
+
+    Per IMPLEMENTATION_GUIDE Appendix D.2, ``_2k_context_codex`` matches the
+    CARD paper's setup. ``task`` is one of {``line``, ``api``, ``function``}.
+
+    The JSONL ``prompt`` field is left-context-only and is reconstructed from
+    the on-disk file (not used as-is — some variants ship retrieval baked in).
+    Cross-file context is built by globbing every .py file in the target
+    repository's directory tree.
+    """
+    if task not in ("line", "api", "function"):
+        raise ValueError(f"task must be one of line/api/function, got {task!r}")
+
+    base = Path(base_path)
+    jsonl = base / "datasets" / f"{task}_level_completion_2k_context_codex.test.jsonl"
+    if not jsonl.exists():
+        raise FileNotFoundError(
+            f"RepoEval data not found: {jsonl}. "
+            f"Download from https://github.com/microsoft/CodeT/tree/main/RepoCoder "
+            f"and extract to {base}/"
+        )
+    repos_root = base / "repositories"
+    if not repos_root.exists():
+        raise FileNotFoundError(
+            f"RepoEval repositories not found: {repos_root}. "
+            f"Download the repositories archive from the same RepoCoder repo."
+        )
+
+    with jsonlines.open(jsonl) as reader:
+        for rec in reader:
+            meta = rec["metadata"]
+            fpath_tuple = meta["fpath_tuple"]
+            fpath = repos_root.joinpath(*fpath_tuple)
+            try:
+                full_content = fpath.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+
+            lines = full_content.splitlines(keepends=True)
+            line_no = meta["line_no"]
+            gt = meta["ground_truth"]
+            gt_line_count = gt.count("\n") + 1
+
+            x_left = "".join(lines[:line_no])
+            x_right = "".join(lines[line_no + gt_line_count:])
+
+            # Per-instance "repository" = every .py under the target repo's root.
+            repo_name = fpath_tuple[0]
+            repo_dir = repos_root / repo_name
+            repo_files: dict[str, str] = {}
+            for f in repo_dir.rglob("*.py"):
+                try:
+                    repo_files[str(f.relative_to(repo_dir))] = f.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+
+            yield Instance(
+                x_left=x_left,
+                x_right=x_right,
+                ground_truth=gt,
+                repo_files=repo_files,
+                instance_id=meta.get("task_id", ""),
+                target_file=str(Path(*fpath_tuple)),
+                repository=repo_name,
+            )

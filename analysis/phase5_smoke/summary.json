@@ -1,0 +1,166 @@
+{
+  "aggregate": [
+    {
+      "config": "C1_no_retrieve",
+      "n": 50,
+      "percent_retrieval": 0.0,
+      "exact_match": 0.0,
+      "edit_similarity": 0.14615296476796355,
+      "identifier_f1": 0.0,
+      "repo_symbol_precision": 0.0,
+      "hallucination_rate": 1.0,
+      "mean_latency_ms": 1.0
+    },
+    {
+      "config": "C2_always_retrieve",
+      "n": 50,
+      "percent_retrieval": 100.0,
+      "exact_match": 0.0,
+      "edit_similarity": 0.14615296476796355,
+      "identifier_f1": 0.0,
+      "repo_symbol_precision": 0.0,
+      "hallucination_rate": 1.0,
+      "mean_latency_ms": 1.0
+    },
+    {
+      "config": "C3_card",
+      "n": 50,
+      "percent_retrieval": 100.0,
+      "exact_match": 0.0,
+      "edit_similarity": 0.14615296476796355,
+      "identifier_f1": 0.0,
+      "repo_symbol_precision": 0.0,
+      "hallucination_rate": 1.0,
+      "mean_latency_ms": 2.0
+    },
+    {
+      "config": "C4_cascade",
+      "n": 50,
+      "percent_retrieval": 100.0,
+      "exact_match": 0.0,
+      "edit_similarity": 0.14615296476796355,
+      "identifier_f1": 0.0,
+      "repo_symbol_precision": 0.0,
+      "hallucination_rate": 1.0,
+      "mean_latency_ms": 2.0
+    }
+  ],
+  "trigger_breakdown": [
+    {
+      "trigger_reason": "card",
+      "n": 50,
+      "fraction": 1.0,
+      "edit_similarity": 0.14615296476796355,
+      "identifier_f1": 0.0,
+      "hallucination_rate": 1.0,
+      "mean_latency_ms": 2.0
+    }
+  ],
+  "disagreement": {
+    "n_shared": 50,
+    "card_no_cascade_no": {
+      "n": 0,
+      "fraction": 0.0
+    },
+    "card_no_cascade_yes": {
+      "n": 0,
+      "fraction": 0.0
+    },
+    "card_yes_cascade_no": {
+      "n": 0,
+      "fraction": 0.0
+    },
+    "card_yes_cascade_yes": {
+      "n": 50,
+      "fraction": 1.0,
+      "card_mean_es": 0.14615296476796355,
+      "cascade_mean_es": 0.14615296476796355,
+      "card_hallucination_rate": 1.0,
+      "cascade_hallucination_rate": 1.0
+    }
+  },
+  "mcnemar": {
+    "p_value": 1.0,
+    "b": 0,
+    "c": 0,
+    "n": 50
+  },
+  "es_paired_bootstrap": {
+    "mean_diff": 0.0,
+    "ci_lower": 0.0,
+    "ci_upper": 0.0,
+    "n": 50
+  },
+  "t_rag_sweep": [
+    {
+      "t_rag": 0.5,
+      "n": 50,
+      "percent_retrieval": 0.0,
+      "mean_edit_similarity": 0.14615296476796355,
+      "hallucination_rate": 1.0
+    },
+    {
+      "t_rag": 0.55,
+      "n": 50,
+      "percent_retrieval": 0.0,
+      "mean_edit_similarity": 0.14615296476796355,
+      "hallucination_rate": 1.0
+    },
+    {
+      "t_rag": 0.6,
+      "n": 50,
+      "percent_retrieval": 0.0,
+      "mean_edit_similarity": 0.14615296476796355,
+      "hallucination_rate": 1.0
+    },
+    {
+      "t_rag": 0.65,
+      "n": 50,
+      "percent_retrieval": 0.0,
+      "mean_edit_similarity": 0.14615296476796355,
+      "hallucination_rate": 1.0
+    },
+    {
+      "t_rag": 0.7,
+      "n": 50,
+      "percent_retrieval": 100.0,
+      "mean_edit_similarity": 0.14615296476796355,
+      "hallucination_rate": 1.0
+    },
+    {
+      "t_rag": 0.75,
+      "n": 50,
+      "percent_retrieval": 100.0,
+      "mean_edit_similarity": 0.14615296476796355,
+      "hallucination_rate": 1.0
+    },
+    {
+      "t_rag": 0.8,
+      "n": 50,
+      "percent_retrieval": 100.0,
+      "mean_edit_similarity": 0.14615296476796355,
+      "hallucination_rate": 1.0
+    },
+    {
+      "t_rag": 0.85,
+      "n": 50,
+      "percent_retrieval": 100.0,
+      "mean_edit_similarity": 0.14615296476796355,
+      "hallucination_rate": 1.0
+    },
+    {
+      "t_rag": 0.9,
+      "n": 50,
+      "percent_retrieval": 100.0,
+      "mean_edit_similarity": 0.14615296476796355,
+      "hallucination_rate": 1.0
+    },
+    {
+      "t_rag": 0.95,
+      "n": 50,
+      "percent_retrieval": 100.0,
+      "mean_edit_similarity": 0.14615296476796355,
+      "hallucination_rate": 1.0
+    }
+  ]
+}

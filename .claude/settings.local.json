@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(brew list *)",
+      "Read(//opt/homebrew/bin/**)",
+      "Bash(python3 -c \"import PyPDF2; print\\('PyPDF2 ok'\\)\")",
+      "Bash(python3 -c \"import pdfplumber; print\\('pdfplumber ok'\\)\")",
+      "Bash(python3 -c \"import pypdf; print\\('pypdf ok'\\)\")",
+      "Bash(python3.11 --version)",
+      "Bash(/opt/homebrew/bin/python3.11 --version)",
+      "Bash(conda env *)",
+      "Read(//Users/lucaionescu/miniconda3/envs/**)",
+      "Bash(/Users/lucaionescu/miniconda3/bin/conda env *)",
+      "Bash(/Users/lucaionescu/miniconda3/envs/adaptive-retrieval/bin/pip install *)",
+      "Bash(/Users/lucaionescu/miniconda3/envs/adaptive-retrieval/bin/pytest tests/test_analysis.py -v)",
+      "Bash(/Users/lucaionescu/miniconda3/envs/adaptive-retrieval/bin/python scripts/06_analysis.py --c1 results/phase5_smoke/C1_no_retrieve.jsonl --c2 results/phase5_smoke/C2_always_retrieve.jsonl --c3 results/phase5_smoke/C3_card.jsonl --c4 results/phase5_smoke/C4_cascade.jsonl --output-dir analysis/phase5_smoke)",
+      "Bash(/Users/lucaionescu/miniconda3/envs/adaptive-retrieval/bin/pytest tests/)",
+      "Bash(/Users/lucaionescu/miniconda3/envs/adaptive-retrieval/bin/ruff check *)",
+      "Bash(/Users/lucaionescu/miniconda3/envs/adaptive-retrieval/bin/python scripts/00_smoke_test.py --estimator models/estimator_synthetic.lgb --t-rag 0.7)"
+    ]
+  }
+}

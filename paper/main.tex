@@ -1,0 +1,355 @@
+% Adaptive Retrieval for Repository-Level Code Completion
+% 8-10 page two-column paper skeleton (IMPLEMENTATION_GUIDE §16 Phase 8 outline).
+%
+% Compile with:   latexmk -pdf main.tex
+% TODO comments mark placeholders for results that depend on Phase 6 runs.
+
+\documentclass[10pt,twocolumn]{article}
+
+\usepackage[margin=0.8in]{geometry}
+\usepackage{times}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{microtype}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue,
+}
+
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+\newcommand{\TRAG}{T_{\text{RAG}}}
+\newcommand{\TACC}{T_{\text{ACC}}}
+
+\title{Adaptive Retrieval for Repository-Level Code Completion:\\
+A Cascade of Uncertainty and Static Analysis}
+
+\author{Project Group 17\\
+% Authors anonymised for double-blind review
+}
+
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Retrieval-augmented generation (RAG) improves accuracy on repository-level
+code completion but spends compute on every instance, including ones where
+retrieval is unhelpful or harmful. CARD~\cite{zhang2024card} addresses this
+with a learned uncertainty gate that skips retrieval when the model's
+zero-shot prediction looks confident. We observe that CARD's uncertainty
+signal misses a specific class of failures: \emph{confidently-generated
+identifiers that don't actually exist in the repository}. We add a parallel
+gate based on static analysis of the model's prediction, which fires
+retrieval on instances where any used identifier fails to resolve in the
+file's scope, the repository's symbol table, or the language's builtins. The
+combined cascade preserves CARD's retrieval savings while
+\todo{XX\%} lowering the hallucination rate on CrossCodeEval-Python
+(McNemar's $p < $ \todo{XX}), and matching always-retrieve on edit
+similarity at \todo{XX\%} of the retrieval cost.
+\end{abstract}
+
+\section{Introduction}
+
+Code-completion models trained on large code corpora can reliably continue
+short snippets of code, but performance degrades sharply when the right
+completion depends on context elsewhere in the same repository --- a
+function defined two files away, a class method whose signature lives in a
+sibling module, an internal API whose name is conventional only to that
+project. Retrieval-augmented generation closes much of this gap by
+prepending relevant snippets to the prompt, but it does so indiscriminately,
+spending compute on instances where the in-file context already suffices or
+where retrieved snippets actively distract the model.
+
+\textbf{Adaptive retrieval} addresses this by deciding, per instance,
+whether to retrieve. CARD~\cite{zhang2024card} learns a regressor over
+per-token log-probabilities and entropies to predict the zero-shot
+output's edit similarity, and triggers retrieval when this prediction is
+below a threshold. Our work starts from the observation that CARD's
+signal --- aggregated logit confidence --- is blind to a specific failure
+mode that is both common and pernicious: hallucinated identifiers.
+
+A model can generate \texttt{self.client.send(\textcolor{red}{msg})} with
+high token-level probability across the entire span, even when
+\texttt{msg} is not bound anywhere in the surrounding code. CARD will see
+high confidence and skip retrieval; the prediction will be silently
+wrong; the user will see a plausible-looking line of code that fails at
+import time.
+
+\textbf{Contributions.} We add a static-analysis cascade stage to CARD's
+decision flow. The new stage runs only when CARD says ``skip'' and triggers
+retrieval if the prediction's AST contains an identifier that resolves
+nowhere (an \emph{unresolved} reference --- almost certainly a
+hallucination) or that resolves in the repository's symbol table but not
+the in-file scope (a \emph{cross-file} reference --- retrieval would
+demonstrably help). The cascade is asymmetric by construction: static
+analysis can only \emph{add} retrievals to CARD's decisions, never remove
+them, which bounds the worst-case retrieval count to always-retrieve and
+frames the central research question cleanly: \emph{does the extra
+retrieval budget reduce hallucinations?}
+
+We evaluate on CrossCodeEval-Python and RepoEval (line and API
+subsets), comparing the cascade against vanilla CARD, always-retrieve,
+never-retrieve, a static-only ablation, and an oracle upper bound. Our
+empirical results show \todo{XX}.
+
+\section{Background and related work}
+
+\paragraph{Repository-level code completion.} \todo{1--2 paragraphs.
+Reference RepoCoder~\cite{zhang2023repocoder} which introduces the iterative
+retrieval baseline and RepoEval benchmark; CrossCodeEval~\cite{ding2023cce}
+which curates instances explicitly requiring cross-file context;
+Repoformer~\cite{wu2024repoformer} which proposes self-supervised retrieval
+gating. Contrast the three approaches' assumptions: RepoCoder always
+retrieves and iterates; Repoformer learns when not to retrieve via a
+self-evaluation token; CARD learns the same with a separately-trained
+regressor.}
+
+\paragraph{Uncertainty for adaptive retrieval.} \todo{1 paragraph. CARD's
+13-D feature vector and LightGBM regressor; FLARE~\cite{jiang2023flare}
+which uses look-ahead probabilities for active retrieval in long-form
+generation; the broader literature on calibration in generative models.}
+
+\paragraph{Hallucination detection in code.} \todo{1 paragraph. Existing
+work on code hallucinations (typically post-hoc, using exact-match or
+execution); our position: static analysis of the prediction is a cheap,
+language-agnostic signal that can be used \emph{pre-execution} to trigger
+retrieval, sidestepping the need to actually run the predicted code.}
+
+\section{Method}
+
+\subsection{The cascade}
+
+Given the in-file context $X = (X_{\text{left}}, X_{\text{right}})$ and the
+repository $R$, the cascade decides the final prediction $\hat{y}$ in three
+asymmetric stages:
+
+\begin{algorithm}[H]
+\caption{The cascade pipeline (single-RAG).}
+\begin{algorithmic}[1]
+\STATE $\hat{y}_0, \text{logits}_0 \gets G(X_{\text{left}}, X_{\text{right}})$
+\STATE $\hat{s}_0 \gets \text{Estimator}(\text{features}(\text{logits}_0))$
+\IF{$\hat{s}_0 < \TRAG$}
+    \STATE $CC \gets \text{BM25}(X_{\text{left}}, R)$
+    \STATE \textbf{return} $G(X_{\text{left}}, X_{\text{right}}, CC)$, \textbf{reason}=\texttt{card}
+\ENDIF
+\STATE $\text{sa} \gets \text{StaticAnalyzer}(\hat{y}_0, X_{\text{left}}, X_{\text{right}}, R)$
+\IF{$\text{sa.fires}$}
+    \STATE $CC \gets \text{BM25}(X_{\text{left}}, R)$
+    \STATE \textbf{return} $G(X_{\text{left}}, X_{\text{right}}, CC)$, \textbf{reason}=\texttt{static\_\{unresolved$|$crossfile\}}
+\ENDIF
+\STATE \textbf{return} $\hat{y}_0$, \textbf{reason}=\texttt{none}
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{CARD's uncertainty gate}
+
+We reimplement CARD's single-RAG variant
+faithfully~\cite{zhang2024card}: a LightGBM regressor predicts edit
+similarity from a 13-dimensional feature vector built from per-token
+probabilities and entropies (max, min, mean, std, product, geometric
+mean for each, plus generation length). The Estimator is trained on
+\todo{50k/250k} (X, y) pairs sampled from The Stack
+subset~\cite{kocetkov2022stack}, with the same generator that will run
+inference. \todo{Brief note on calibration MSE achieved vs the paper's 0.07.}
+
+\subsection{Static analysis of the prediction}
+
+The novel signal classifies each identifier used in $\hat{y}_0$ as
+\textbf{builtin} (Python builtin or visible at the hole), \textbf{in-file}
+(in scope at the completion position), \textbf{cross-file} (defined
+somewhere in $R$ but not visible in-file), or \textbf{unresolved}
+(nowhere). The analyzer uses tree-sitter for fault-tolerant parsing and
+tracks scope through imports (including aliased and \texttt{from X import
+Y} forms), function parameters, for-loop and comprehension variables,
+walrus expressions, \texttt{with} aliases, and lambda parameters.
+
+The stage \emph{fires} if any \textbf{unresolved} or \textbf{cross-file}
+identifier is found. When both classes appear in the same prediction we
+report the trigger reason as \texttt{static\_unresolved}, as unresolved is
+the strictly stronger hallucination signal.
+
+\subsection{Implementation}
+
+\todo{Brief paragraph: 7B-parameter code LMs (Qwen2.5-Coder or
+CodeLlama-7B-hf), BM25 over 20-line stride-10 chunks, FIM prompt
+formatting per family, generation cache keyed on (model, prompt, max\_tokens)
+that shares the zero-shot pass across C1/C3/C4. Roughly XX lines of Python
+across XX modules, released at \url{TODO}.}
+
+\section{Experiments}
+
+\subsection{Setup}
+
+\paragraph{Datasets.} CrossCodeEval-Python (2{,}665 instances,
+\cite{ding2023cce}) is the primary evaluation. RepoEval-line and -api
+(1{,}600 instances each, \cite{zhang2023repocoder}) are used to validate
+the CARD reimplementation against the paper's published numbers and as a
+secondary evaluation surface.
+
+\paragraph{Configurations.} We compare six configurations: (C1)
+no-retrieve, (C2) always-retrieve with BM25 top-10, (C3) vanilla CARD,
+(C4) our cascade, (C5) static-only ablation (retrieve iff static analysis
+fires on the zero-shot output), and (C6) an oracle that runs both C1 and
+C2 per instance and keeps whichever has higher edit similarity against the
+ground truth.
+
+\paragraph{Metrics.} Following~\cite{ding2023cce} and~\cite{zhang2024card}:
+exact match (EM), edit similarity (ES), and identifier-F1 (IdF1) for
+accuracy. For efficiency: percent retrieval and mean latency (ms).
+For hallucination: \emph{repository-symbol precision} --- the fraction
+of identifiers in the prediction that resolve somewhere in scope ---
+and a per-instance \emph{hallucination flag} (true iff at least one
+unresolved identifier).
+
+\subsection{CARD reproduction}
+
+\todo{Table comparing our CARD reimplementation against the paper's Table 3
+on RepoEval-line and RepoEval-API. Target: within $\pm 1\%$ ES of published
+numbers.}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+Task & Metric & \cite{zhang2024card} & Ours & $\Delta$ \\
+\midrule
+Line & EM & 52.56 & \todo{} & \todo{} \\
+     & ES & 72.26 & \todo{} & \todo{} \\
+API  & EM & 40.38 & \todo{} & \todo{} \\
+     & ES & 67.01 & \todo{} & \todo{} \\
+\bottomrule
+\end{tabular}
+\caption{CARD-RG1 with CodeLlama-7B on RepoEval. Our reimplementation vs the
+published numbers.}
+\label{tab:card_reproduction}
+\end{table}
+
+\subsection{RQ1: cascade vs. baselines}
+
+\todo{Headline table: 6 configs $\times$ 3 datasets. For each cell:
+EM, ES, IdF1, \% retrieval, mean latency.}
+
+\begin{table*}[h]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+Config & EM & ES & IdF1 & RSP & Hall.\% & Retr.\% \\
+\midrule
+C1 No-retrieve     & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} & 0.0 \\
+C2 Always-retrieve & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} & 100.0 \\
+C3 CARD            & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} \\
+\textbf{C4 Cascade (ours)} & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} \\
+C5 Static-only     & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} \\
+C6 Oracle          & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} \\
+\bottomrule
+\end{tabular}
+\caption{Headline results on CrossCodeEval-Python. RSP =
+repository-symbol precision; Hall.\% = per-instance hallucination rate.}
+\label{tab:rq1_cce}
+\end{table*}
+
+\todo{Narrative: H1 is supported if C4 matches C2 on ES within X and
+beats C1 strictly. Report the cascade's retrieval savings vs C2 and
+hallucination reduction vs C3. Discuss when the cascade ties C2
+(probably: low ratio of cross-file dependencies) and when it beats C2
+(high cross-file ratio, smaller models).}
+
+\subsection{RQ2: hallucination reduction from static analysis}
+
+We compare hallucination rate between vanilla CARD (C3) and the cascade
+(C4) on the same 2{,}665 CrossCodeEval-Python instances, using McNemar's
+exact test on the per-instance hallucination flag.
+
+\todo{Report b, c, p-value. Hypothesis H2 is supported if c $\gg$ b
+(cascade fixes more hallucinations than it introduces) and p $<$ 0.05.}
+
+\subsection{RQ3: CARD vs. baselines}
+
+\todo{Reproducing CARD's published findings: matches always-retrieve
+within $\pm$ 1 ES while saving 20--46\% of retrievals.}
+
+\subsection{Ablations}
+
+\todo{A1: Static strictness. Cascade with fire\_on\_crossfile $\in
+\{T, F\} \times$ fire\_on\_unresolved $\in \{T, F\}$.
+A2: $\TRAG$ sweep $\in \{0.7, 0.8, 0.9\}$.
+A3: Retrieval top-k $\in \{5, 10, 20\}$.}
+
+\section{Analysis}
+
+\subsection{Per-trigger-reason breakdown}
+
+\todo{Table breaking down C4's 2,665 instances by trigger reason. For
+each reason: count, fraction, mean ES, hallucination rate.
+The \texttt{static\_unresolved} bucket is the cleanest evidence for our
+contribution: instances where CARD said ``skip'' (i.e.\ was confident)
+but the prediction had an unresolved name, and the static-analysis-
+triggered retrieval fixed it.}
+
+\subsection{Disagreement analysis: where CARD and cascade differ}
+
+\todo{Focus on the ``card\_no\_cascade\_yes'' bucket: instances where
+CARD's gate said skip but static analysis added a retrieval. Report
+how often this bucket's ES improves under cascade and characterize
+qualitatively what kinds of names triggered the static gate.}
+
+\subsection{Threshold sweep}
+
+\todo{Figure: ES, hallucination rate, retrieval \% as a function of
+$\TRAG$. Reproduced by scripts/06\_analysis.py.}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\columnwidth]{figures/t_rag_sweep.pdf}
+\caption{$\TRAG$ sweep on CrossCodeEval-Python with the CARD ŝ values from
+the C3 run, paired with C1/C2 predictions. The cascade picks the operating
+point that maximises ES at the lowest retrieval cost.}
+\label{fig:trag_sweep}
+\end{figure}
+
+\subsection{Qualitative examples}
+
+\todo{2--3 concrete instances pulled from the JSONL: one where the cascade's
+static gate caught a hallucination CARD missed, one where the cascade
+and CARD agreed, and one where the cascade triggered a retrieval that
+didn't help (failure case). Show $\hat{y}_0$, the cascade's final
+prediction, and the ground truth.}
+
+\section{Discussion}
+
+\todo{Failure modes, limitations of static analysis (decorators with
+runtime side effects, dynamic attribute access, metaclass-defined names),
+and the inherent over-approximation of the unresolved bucket (any name
+not in our repo-wide symbol table is flagged, but Python's
+\texttt{importlib} and runtime name binding can defeat this). Brief note
+on language-portability: tree-sitter has parsers for most languages, so
+the static-analysis stage is portable in principle.}
+
+\section{Conclusion}
+
+We added a static-analysis cascade stage to CARD's adaptive-retrieval
+framework. The new stage targets a specific blind spot of CARD's
+uncertainty signal --- confidently-generated identifiers that don't exist
+--- and triggers retrieval on instances CARD would otherwise skip. Across
+CrossCodeEval-Python and RepoEval, the cascade preserves CARD's retrieval
+savings while reducing per-instance hallucination rate by \todo{XX\%}.
+\todo{One sentence on broader implications: that prediction-side static
+analysis is a cheap, language-portable complement to logit-based
+uncertainty for adaptive retrieval policies.}
+
+\bibliographystyle{plain}
+\bibliography{refs}
+
+\end{document}

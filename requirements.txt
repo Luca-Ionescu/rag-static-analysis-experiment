@@ -1,0 +1,41 @@
+# Core
+numpy==1.26.4
+scipy==1.13.0
+scikit-learn==1.5.0
+
+# LLM serving
+vllm==0.5.4
+torch==2.3.0
+transformers==4.43.0
+accelerate==0.32.0
+
+# Data
+datasets==2.20.0
+huggingface-hub==0.24.0
+
+# Static analysis
+# Bumped from the guide's 0.22.3/0.21.0: tree-sitter-python 0.21.0 has no
+# Python 3.11 wheels on PyPI (only 0.23.x+ is available). The 0.23.x API used
+# in src/adaptive_retrieval/static_analysis/parser.py is identical to 0.22.x.
+tree-sitter==0.23.2
+tree-sitter-python==0.23.6
+
+# Retrieval
+rank-bm25==0.2.2
+
+# Metrics
+python-Levenshtein==0.25.1
+
+# ML for CARD's Estimator
+lightgbm==4.5.0
+xgboost==2.1.0      # for ablation only
+
+# Utilities
+tqdm==4.66.4
+pydantic==2.8.0
+jsonlines==4.0.0
+click==8.1.7
+
+# Dev
+pytest==8.3.2
+ruff==0.5.5
