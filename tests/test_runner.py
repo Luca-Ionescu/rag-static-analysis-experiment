@@ -126,7 +126,9 @@ def test_c3_card_requires_estimator(tmp_path, instances):
 
 
 def test_c4_cascade_writes_trigger_reason(tmp_path, instances):
-    gen = MockGenerator(default_prediction="cross_func()")  # name resolves cross-file
+    # Default analyzer fires on unresolved only. Use a hallucinated name so
+    # the static stage triggers retrieval and we exercise the C4 path.
+    gen = MockGenerator(default_prediction="totally_made_up_name()")
     est = _make_estimator(s_hat=0.95)  # CARD says skip → static stage runs
     summary = run_experiment(
         config="C4_cascade",
@@ -137,12 +139,33 @@ def test_c4_cascade_writes_trigger_reason(tmp_path, instances):
         output_path=tmp_path / "c4.jsonl",
         progress=False,
     )
-    # cross_func is in repo but not in-file → static_crossfile fires.
+    # totally_made_up_name resolves nowhere → static_unresolved fires.
     assert summary.n_retrieved == 5
     with jsonlines.open(tmp_path / "c4.jsonl") as r:
         for rec in r:
-            assert rec["trigger_reason"] == "static_crossfile"
-            assert "cross_func" in rec["static_crossfile"]
+            assert rec["trigger_reason"] == "static_unresolved"
+            assert "totally_made_up_name" in rec["static_unresolved"]
+
+
+def test_c4_cascade_skips_when_only_crossfile_with_default_flags(tmp_path, instances):
+    # Cross-file name with default fire_on_crossfile=False → cascade skips
+    # retrieval. Verifies the new default surfaces end-to-end through C4.
+    gen = MockGenerator(default_prediction="cross_func()")
+    est = _make_estimator(s_hat=0.95)  # CARD says skip
+    summary = run_experiment(
+        config="C4_cascade",
+        dataset_name="synthetic",
+        instances=instances,
+        generator=gen,
+        estimator=est,
+        output_path=tmp_path / "c4_crossfile.jsonl",
+        progress=False,
+    )
+    assert summary.n_retrieved == 0
+    with jsonlines.open(tmp_path / "c4_crossfile.jsonl") as r:
+        for rec in r:
+            assert rec["trigger_reason"] == "none"
+            assert rec["retrieved"] is False
 
 
 def test_c4_cascade_requires_estimator(tmp_path, instances):
@@ -230,7 +253,9 @@ def test_records_match_section_15_1_schema(tmp_path, instances):
     required = {
         "instance_id", "repository", "target_file", "ground_truth",
         "prediction", "retrieved", "trigger_reason", "s_hat_0",
-        "static_unresolved", "static_crossfile", "metrics", "latency_ms",
+        "static_unresolved", "static_crossfile",
+        "signature_issues", "import_issues",
+        "metrics", "latency_ms",
         "config", "dataset",
     }
     for rec in records:

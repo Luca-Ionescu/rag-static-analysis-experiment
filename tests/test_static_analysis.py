@@ -47,7 +47,10 @@ def test_cross_file_resolved_fires(tmp_path):
 
     syms = RepositorySymbolTable(repo)
     scope = InFileScopeAnalyzer()
-    analyzer = PredictionAnalyzer(scope, syms)
+    # Default is fire_on_crossfile=False (the cross-file path is now an
+    # ablation rather than a default signal). Opt in explicitly to exercise
+    # the detection logic.
+    analyzer = PredictionAnalyzer(scope, syms, fire_on_crossfile=True)
 
     # X_left does NOT import cross_file_func; prediction uses it
     x_left = "def f():\n    return "
@@ -56,4 +59,21 @@ def test_cross_file_resolved_fires(tmp_path):
 
     r = analyzer.analyze(prediction, x_left, x_right)
     assert r.fires
+    assert "cross_file_func" in r.cross_file_identifiers
+
+
+def test_cross_file_resolved_does_not_fire_by_default(tmp_path):
+    """With default fire_on_crossfile=False, a cross-file name alone is a
+    diagnostic (still recorded in cross_file_identifiers) but does not fire."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "lib.py").write_text("def cross_file_func():\n    pass\n")
+
+    analyzer = PredictionAnalyzer(InFileScopeAnalyzer(), RepositorySymbolTable(repo))
+    r = analyzer.analyze(
+        prediction="cross_file_func()",
+        x_left="def f():\n    return ",
+        x_right="\n",
+    )
+    assert not r.fires
     assert "cross_file_func" in r.cross_file_identifiers

@@ -24,13 +24,22 @@ def empty_analyzer(tmp_path):
 
 @pytest.fixture
 def repo_with(tmp_path):
-    """Factory: create a tiny repo with the given filename->content map."""
+    """Factory: create a tiny repo with the given filename->content map.
+
+    Returns an analyzer with ``fire_on_crossfile=True`` so the existing
+    Appendix-E test suite (which predates the default flip) still exercises
+    the cross-file resolution path.
+    """
     def _make(files: dict[str, str]):
         repo = tmp_path / "repo"
         repo.mkdir(exist_ok=True)
         for name, content in files.items():
             (repo / name).write_text(content)
-        return PredictionAnalyzer(InFileScopeAnalyzer(), RepositorySymbolTable(repo))
+        return PredictionAnalyzer(
+            InFileScopeAnalyzer(),
+            RepositorySymbolTable(repo),
+            fire_on_crossfile=True,
+        )
     return _make
 
 

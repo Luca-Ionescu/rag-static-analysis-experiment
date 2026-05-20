@@ -87,15 +87,24 @@ import time.
 
 \textbf{Contributions.} We add a static-analysis cascade stage to CARD's
 decision flow. The new stage runs only when CARD says ``skip'' and triggers
-retrieval if the prediction's AST contains an identifier that resolves
-nowhere (an \emph{unresolved} reference --- almost certainly a
-hallucination) or that resolves in the repository's symbol table but not
-the in-file scope (a \emph{cross-file} reference --- retrieval would
-demonstrably help). The cascade is asymmetric by construction: static
-analysis can only \emph{add} retrievals to CARD's decisions, never remove
-them, which bounds the worst-case retrieval count to always-retrieve and
-frames the central research question cleanly: \emph{does the extra
-retrieval budget reduce hallucinations?}
+retrieval on any of three orthogonal hallucination classes:
+\textbf{(i)} an \emph{unresolved} reference --- an identifier in the
+prediction's AST that resolves nowhere in scope, the repository, or the
+language's builtins; \textbf{(ii)} a \emph{signature mismatch} --- a call
+to a known repo function with the wrong arity or an unknown keyword
+argument; and \textbf{(iii)} a \emph{wrong-import} attribution --- a
+\texttt{from X import Y} statement where Y actually lives in module Z and
+is not re-exported by X. A weaker fourth signal, \emph{cross-file}
+references, is studied as an ablation: a cross-file identifier in the
+prediction is evidence the model already recovered the right name, so
+firing retrieval there spends budget on a case the parametric memory
+already nailed and risks the retrieved-context distractor effect
+documented in CARD~\cite{zhang2024card} and FLARE~\cite{jiang2023flare}.
+The cascade is asymmetric by construction: static analysis can only
+\emph{add} retrievals to CARD's decisions, never remove them, which bounds
+the worst-case retrieval count to always-retrieve and frames the central
+research question cleanly: \emph{does the extra retrieval budget reduce
+hallucinations?}
 
 We evaluate on CrossCodeEval-Python and RepoEval (line and API
 subsets), comparing the cascade against vanilla CARD, always-retrieve,
@@ -145,7 +154,7 @@ asymmetric stages:
 \STATE $\text{sa} \gets \text{StaticAnalyzer}(\hat{y}_0, X_{\text{left}}, X_{\text{right}}, R)$
 \IF{$\text{sa.fires}$}
     \STATE $CC \gets \text{BM25}(X_{\text{left}}, R)$
-    \STATE \textbf{return} $G(X_{\text{left}}, X_{\text{right}}, CC)$, \textbf{reason}=\texttt{static\_\{unresolved$|$crossfile\}}
+    \STATE \textbf{return} $G(X_{\text{left}}, X_{\text{right}}, CC)$, \textbf{reason}=\texttt{static\_\{unresolved$|$signature$|$import$|$crossfile\}}
 \ENDIF
 \STATE \textbf{return} $\hat{y}_0$, \textbf{reason}=\texttt{none}
 \end{algorithmic}
@@ -164,19 +173,67 @@ inference. \todo{Brief note on calibration MSE achieved vs the paper's 0.07.}
 
 \subsection{Static analysis of the prediction}
 
-The novel signal classifies each identifier used in $\hat{y}_0$ as
-\textbf{builtin} (Python builtin or visible at the hole), \textbf{in-file}
-(in scope at the completion position), \textbf{cross-file} (defined
-somewhere in $R$ but not visible in-file), or \textbf{unresolved}
-(nowhere). The analyzer uses tree-sitter for fault-tolerant parsing and
-tracks scope through imports (including aliased and \texttt{from X import
-Y} forms), function parameters, for-loop and comprehension variables,
-walrus expressions, \texttt{with} aliases, and lambda parameters.
+The cascade's static stage decomposes ``does this prediction look like a
+hallucination?'' into three independent signals over the prediction's
+abstract syntax tree, plus a fourth (cross-file) retained only for the
+ablation.
 
-The stage \emph{fires} if any \textbf{unresolved} or \textbf{cross-file}
-identifier is found. When both classes appear in the same prediction we
-report the trigger reason as \texttt{static\_unresolved}, as unresolved is
-the strictly stronger hallucination signal.
+\paragraph{Unresolved identifiers.} For each identifier used in
+$\hat{y}_0$ we classify the name as \textbf{builtin} (Python builtin or
+visible at the hole), \textbf{in-file} (in scope at the completion
+position), \textbf{cross-file} (defined somewhere in $R$ but not visible
+in-file), or \textbf{unresolved} (nowhere). The analyzer uses tree-sitter
+for fault-tolerant parsing and tracks scope through imports (including
+aliased and \texttt{from X import Y} forms), function parameters,
+for-loop and comprehension variables, walrus expressions, \texttt{with}
+aliases, and lambda parameters. An \textbf{unresolved} name is a
+near-certain hallucination: the model produced an identifier that exists
+nowhere we can see.
+
+\paragraph{Signature mismatches.} For each \texttt{call} node in
+$\hat{y}_0$ whose callee can be resolved to a unique repository signature
+(bare-identifier calls, module-qualified calls of the form
+\texttt{mod.func(...)} when \texttt{mod} is an imported repo module, and
+class-qualified method calls \texttt{Cls.m(...)}), we compare the call's
+positional-argument count against the declared range
+$[\text{min\_positional}, \text{max\_positional}]$ (deriving the bounds
+from the signature's defaults and \texttt{*args}) and check every keyword
+argument against the callee's parameter set (unless the callee declares
+\texttt{**kwargs}). Calls whose callee can't be uniquely resolved
+--- method calls on untyped receivers (\texttt{self.x}, \texttt{obj.x}),
+multi-step attribute chains, calls whose callee is a call result,
+external library callees, or callees decorated with signature-changing
+wrappers --- are skipped. This conservative abstention preserves
+precision over recall.
+
+\paragraph{Wrong-import attributions.} For each
+\texttt{from X import Y} statement in $\hat{y}_0$ we check that
+\texttt{Y} is either defined in module \texttt{X} or is re-exported by
+\texttt{X}'s \texttt{\_\_init\_\_.py} (via direct re-import or an
+\texttt{\_\_all\_\_} declaration). When \texttt{Y} is defined elsewhere
+in the repository as module \texttt{Z $\neq$ X} we flag the import as
+\texttt{wrong\_origin}. A parallel check applies to module-qualified
+attribute usage: for an in-file \texttt{import X as M} binding,
+\texttt{M.Y} is flagged when \texttt{Y} lives outside module \texttt{X}.
+Star imports and external modules trigger abstention.
+
+\paragraph{Cross-file references (ablation only).} A cross-file name
+in the prediction is evidence the model already recovered the right
+identifier from parametric memory or in-file hints, so firing retrieval
+there spends budget on a case the model already nailed and risks the
+retrieved-context distractor effect. We therefore disable the
+\texttt{fire\_on\_crossfile} flag by default but retain it as a
+configurable knob so Section~\ref{sec:ablations} can quantify its
+marginal contribution.
+
+\paragraph{Trigger-reason precedence.} When multiple signals fire on the
+same prediction, we report the strongest:
+\texttt{static\_unresolved} $>$ \texttt{static\_signature} $>$
+\texttt{static\_import} $>$ \texttt{static\_crossfile}. All diagnostic
+payloads (unresolved names, call issues, import issues, cross-file
+names) are still surfaced in the per-instance JSONL so the analysis in
+Section~\ref{sec:analysis} can reconstruct any of the lower-priority
+classes post-hoc.
 
 \subsection{Implementation}
 
@@ -281,22 +338,78 @@ exact test on the per-instance hallucination flag.
 within $\pm$ 1 ES while saving 20--46\% of retrievals.}
 
 \subsection{Ablations}
+\label{sec:ablations}
 
-\todo{A1: Static strictness. Cascade with fire\_on\_crossfile $\in
-\{T, F\} \times$ fire\_on\_unresolved $\in \{T, F\}$.
-A2: $\TRAG$ sweep $\in \{0.7, 0.8, 0.9\}$.
-A3: Retrieval top-k $\in \{5, 10, 20\}$.}
+\paragraph{A1: per-signal contribution.} The four static signals
+(\textbf{unresolved}, \textbf{signature}, \textbf{import},
+\textbf{crossfile}) are independent flags; the headline cascade enables
+the first three and disables the fourth. To measure each signal's
+marginal contribution we run the cascade with one signal at a time,
+report retrieval rate, ES, identifier-F1, and hallucination rate, and
+report the leave-one-out drop relative to the full cascade.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccccc}
+\toprule
+Variant & EM & ES & IdF1 & Hall.\% & Retr.\% \\
+\midrule
+unresolved only            & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} \\
+signature only             & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} \\
+import only                & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} \\
+crossfile only             & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} \\
+\midrule
+unresolved + signature     & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} \\
+unresolved + import        & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} \\
+\textbf{full cascade (ours)} & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} \\
+full + crossfile           & \todo{} & \todo{} & \todo{} & \todo{} & \todo{} \\
+\bottomrule
+\end{tabular}
+\caption{A1 ablation on CrossCodeEval-Python. The full cascade uses
+unresolved + signature + import.}
+\label{tab:a1_per_signal}
+\end{table}
+
+\paragraph{A2: $\TRAG$ sweep.} $\TRAG \in \{0.7, 0.8, 0.9\}$ on the
+full cascade.
+
+\paragraph{A3: Retrieval top-k.} top-k $\in \{5, 10, 20\}$ on the
+full cascade.
 
 \section{Analysis}
+\label{sec:analysis}
 
 \subsection{Per-trigger-reason breakdown}
 
-\todo{Table breaking down C4's 2,665 instances by trigger reason. For
-each reason: count, fraction, mean ES, hallucination rate.
-The \texttt{static\_unresolved} bucket is the cleanest evidence for our
-contribution: instances where CARD said ``skip'' (i.e.\ was confident)
-but the prediction had an unresolved name, and the static-analysis-
-triggered retrieval fixed it.}
+The cascade now reports one of five trigger reasons per instance:
+\texttt{none}, \texttt{card}, \texttt{static\_unresolved},
+\texttt{static\_signature}, or \texttt{static\_import}
+(plus \texttt{static\_crossfile} when the ablation flag is enabled).
+For each reason we report the count, fraction of the test set, mean ES,
+and per-instance hallucination rate of the resulting prediction. The
+three \texttt{static\_*} buckets are the cleanest evidence for our
+contribution: in each, CARD said ``skip'' yet the prediction's AST
+exhibited one of the three structural hallucination signatures, and the
+cascade's extra retrieval was meant to fix it.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+Trigger & Count & \% & ES & Hall.\% \\
+\midrule
+none                  & \todo{} & \todo{} & \todo{} & \todo{} \\
+card                  & \todo{} & \todo{} & \todo{} & \todo{} \\
+static\_unresolved    & \todo{} & \todo{} & \todo{} & \todo{} \\
+static\_signature     & \todo{} & \todo{} & \todo{} & \todo{} \\
+static\_import        & \todo{} & \todo{} & \todo{} & \todo{} \\
+\bottomrule
+\end{tabular}
+\caption{C4 cascade trigger-reason breakdown on CrossCodeEval-Python.}
+\label{tab:trigger_breakdown}
+\end{table}
 
 \subsection{Disagreement analysis: where CARD and cascade differ}
 
@@ -329,25 +442,56 @@ prediction, and the ground truth.}
 
 \section{Discussion}
 
-\todo{Failure modes, limitations of static analysis (decorators with
-runtime side effects, dynamic attribute access, metaclass-defined names),
-and the inherent over-approximation of the unresolved bucket (any name
-not in our repo-wide symbol table is flagged, but Python's
-\texttt{importlib} and runtime name binding can defeat this). Brief note
-on language-portability: tree-sitter has parsers for most languages, so
-the static-analysis stage is portable in principle.}
+\paragraph{Unresolved.} The unresolved bucket is an over-approximation
+of ``hallucinated identifier'': any name absent from our repo-wide
+symbol table fires, but Python's \texttt{importlib}, dynamic attribute
+access, and runtime name binding can produce legitimate code whose
+identifiers we don't see statically. We mitigate this by populating
+visible names from imports (including aliased and \texttt{from X import
+Y} forms), function parameters, comprehension and walrus targets, with
+and except aliases; the failures we expect to see in qualitative
+analysis are runtime-only bindings.
+
+\paragraph{Signature.} The signature gate is precision-biased by
+construction: it abstains on method calls with untyped receivers
+(\texttt{self.x}, \texttt{obj.x}), on multi-step attribute chains,
+on calls to externally-defined functions, and on callees decorated with
+signature-changing wrappers we don't recognise. The cost is reduced
+recall --- a hallucinated method call on an in-file object will not
+fire signature even though Tier 1 receiver-type inference would catch
+it; we sketch that extension as future work. Conversely, the precision
+gain is concrete: every fire is backed by a uniquely-resolved repo
+signature.
+
+\paragraph{Import.} The wrong-import gate handles re-exports via
+\texttt{\_\_init\_\_.py} imports and \texttt{\_\_all\_\_} declarations,
+but star imports and conditional or runtime-dynamic re-exports defeat
+it. We abstain on these rather than risk false fires.
+
+\paragraph{Cross-file.} Even with cross-file disabled, the
+\texttt{cross\_file\_identifiers} field is still recorded per instance
+so the Phase 7 disagreement analysis can mine cases where the model
+recovered a cross-file name and the cascade was right not to fire.
+
+\paragraph{Language portability.} Tree-sitter has parsers for most
+languages, so the unresolved and signature stages are portable in
+principle. The import stage is Python-specific in its handling of
+\texttt{\_\_init\_\_.py} semantics; a Java or TypeScript port would
+need analogous module-resolution logic.
 
 \section{Conclusion}
 
 We added a static-analysis cascade stage to CARD's adaptive-retrieval
-framework. The new stage targets a specific blind spot of CARD's
-uncertainty signal --- confidently-generated identifiers that don't exist
---- and triggers retrieval on instances CARD would otherwise skip. Across
-CrossCodeEval-Python and RepoEval, the cascade preserves CARD's retrieval
-savings while reducing per-instance hallucination rate by \todo{XX\%}.
-\todo{One sentence on broader implications: that prediction-side static
-analysis is a cheap, language-portable complement to logit-based
-uncertainty for adaptive retrieval policies.}
+framework. The new stage targets three orthogonal blind spots of CARD's
+uncertainty signal --- \textbf{unresolved identifiers},
+\textbf{signature mismatches}, and \textbf{wrong-import attributions} ---
+and triggers retrieval on instances CARD would otherwise skip. Across
+CrossCodeEval-Python and RepoEval, the cascade preserves CARD's
+retrieval savings while reducing per-instance hallucination rate by
+\todo{XX\%}. Prediction-side static analysis is a cheap, training-free,
+language-portable complement to logit-based uncertainty: it costs one
+tree-sitter parse per skipped instance and surfaces structural evidence
+of hallucinations that logit aggregation provably cannot see.
 
 \bibliographystyle{plain}
 \bibliography{refs}
