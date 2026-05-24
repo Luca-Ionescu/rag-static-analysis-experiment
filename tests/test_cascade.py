@@ -121,17 +121,45 @@ def test_high_confidence_unresolved_identifier_triggers_static_unresolved():
     assert len(gen.call_log) == 2
 
 
-def test_high_confidence_crossfile_identifier_triggers_static_crossfile():
+def test_high_confidence_crossfile_identifier_does_not_fire_by_default():
     # Prediction uses a name that resolves in the repo (cross_func in lib.py)
-    # but not in the in-file context. Only static_crossfile (not unresolved)
-    # should fire.
+    # but not in the in-file context. With the default fire_on_crossfile=False,
+    # the cascade should NOT retrieve — the model already recovered the right
+    # cross-file name from parametric memory.
     gen = _BranchedMock(
         zs_pred="cross_func()",
         rag_pred="local_helper_after_retrieve()",
     )
     est = MockEstimator([0.95])
     retriever = BM25Retriever(REPO)
-    analyzer = _make_analyzer(REPO)
+    analyzer = _make_analyzer(REPO)  # defaults: fire_on_crossfile=False
+
+    out = cascade_pipeline(
+        gen, retriever, est, analyzer,
+        x_left="def f():\n    return ", x_right="\n",
+    )
+    assert not out.retrieved
+    assert out.trigger_reason == "none"
+    assert out.prediction == "cross_func()"
+    # Only the zero-shot generation happened.
+    assert len(gen.call_log) == 1
+
+
+def test_high_confidence_crossfile_identifier_fires_when_flag_enabled():
+    # The A1 ablation path: explicit fire_on_crossfile=True restores the
+    # cross-file trigger so the 2x2 (crossfile, unresolved) matrix is still
+    # measurable.
+    gen = _BranchedMock(
+        zs_pred="cross_func()",
+        rag_pred="local_helper_after_retrieve()",
+    )
+    est = MockEstimator([0.95])
+    retriever = BM25Retriever(REPO)
+    analyzer = PredictionAnalyzer(
+        InFileScopeAnalyzer(),
+        RepositorySymbolTable.from_files(REPO),
+        fire_on_crossfile=True,
+    )
 
     out = cascade_pipeline(
         gen, retriever, est, analyzer,
@@ -247,3 +275,87 @@ def test_custom_t_rag_threshold():
         x_left="L", x_right="R", t_rag=0.9,
     )
     assert out_high.trigger_reason == "card"
+
+
+# ---------- new Tier 2 / Tier 3 trigger reasons ----------
+
+def test_signature_mismatch_triggers_static_signature():
+    """CARD says skip; prediction calls a known repo function with the
+    wrong arity. The static-signature gate should fire."""
+    repo_files = {
+        "pkg/__init__.py": "",
+        "pkg/core.py": "def foo(x):\n    return x\n",
+    }
+    gen = _BranchedMock(
+        zs_pred="foo(1, 2, 3)",  # foo only takes one positional arg
+        rag_pred="foo(1)",
+    )
+    est = MockEstimator([0.95])  # CARD says skip
+    retriever = BM25Retriever(repo_files)
+    analyzer = _make_analyzer(repo_files)
+
+    out = cascade_pipeline(
+        gen, retriever, est, analyzer,
+        x_left="from pkg.core import foo\n\ndef caller():\n    return ",
+        x_right="\n",
+    )
+    assert out.retrieved
+    assert out.trigger_reason == "static_signature"
+    assert out.signature_issues
+    assert out.signature_issues[0].kind == "wrong_arity"
+    assert out.prediction == "foo(1)"
+
+
+def test_wrong_import_triggers_static_import():
+    """CARD says skip; prediction imports a known repo symbol from the
+    wrong module. The static-import gate should fire."""
+    repo_files = {
+        "pkg/__init__.py": "",
+        "pkg/core.py": "def Foo():\n    return 1\n",
+        "pkg/other.py": "",
+    }
+    gen = _BranchedMock(
+        zs_pred="from pkg.other import Foo",
+        rag_pred="from pkg.core import Foo",
+    )
+    est = MockEstimator([0.95])
+    retriever = BM25Retriever(repo_files)
+    analyzer = _make_analyzer(repo_files)
+
+    out = cascade_pipeline(
+        gen, retriever, est, analyzer,
+        x_left="",
+        x_right="\n",
+    )
+    assert out.retrieved
+    assert out.trigger_reason == "static_import"
+    assert out.import_issues
+    assert out.import_issues[0].kind == "wrong_origin"
+
+
+def test_unresolved_wins_over_signature_and_import():
+    """Precedence check: unresolved > signature > import > crossfile."""
+    repo_files = {
+        "pkg/__init__.py": "",
+        "pkg/core.py": "def foo(x):\n    return x\n",
+    }
+    # Prediction triggers BOTH a hallucinated identifier AND wrong arity.
+    gen = _BranchedMock(
+        zs_pred="totally_fake() + foo(1, 2, 3)",
+        rag_pred="real()",
+    )
+    est = MockEstimator([0.95])
+    retriever = BM25Retriever(repo_files)
+    analyzer = _make_analyzer(repo_files)
+
+    out = cascade_pipeline(
+        gen, retriever, est, analyzer,
+        x_left="from pkg.core import foo\n\ndef caller():\n    return ",
+        x_right="\n",
+    )
+    assert out.retrieved
+    assert out.trigger_reason == "static_unresolved"
+    assert "totally_fake" in out.static_unresolved
+    # Diagnostics for the lower-priority signal are still surfaced.
+    assert out.signature_issues
+
