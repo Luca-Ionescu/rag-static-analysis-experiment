@@ -7,6 +7,31 @@ from .parser import parse
 
 PYTHON_BUILTINS = set(dir(_builtins)) | {"self", "cls", "True", "False", "None"}
 
+# Common top-level packages that real code routinely references without
+# explicitly importing in the visible context window (e.g., when only an
+# attribute is used at the prediction site but the import is further up). We
+# treat these as "implicitly visible" to cut down on false-positive
+# hallucination flags on standard library and popular third-party names.
+IMPLICIT_TOPLEVEL_PACKAGES = {
+    # stdlib
+    "os", "sys", "re", "json", "math", "random", "time", "datetime", "pathlib",
+    "collections", "typing", "itertools", "functools", "logging", "warnings",
+    "asyncio", "concurrent", "threading", "multiprocessing", "subprocess",
+    "io", "csv", "sqlite3", "pickle", "copy", "abc", "enum", "dataclasses",
+    "hashlib", "hmac", "secrets", "uuid", "urllib", "http", "socket", "ssl",
+    "argparse", "operator", "string", "textwrap", "contextlib", "inspect",
+    "shutil", "glob", "fnmatch", "tempfile", "platform", "weakref",
+    "traceback", "struct", "array", "bisect", "heapq",
+    # popular third-party
+    "numpy", "np", "pandas", "pd", "torch", "tensorflow", "tf", "sklearn",
+    "matplotlib", "plt", "scipy", "PIL", "Image", "cv2",
+    "transformers", "datasets", "huggingface_hub", "tokenizers",
+    "requests", "httpx", "aiohttp", "flask", "fastapi", "starlette", "django",
+    "pytest", "unittest", "click", "rich", "tqdm", "yaml", "toml",
+    "boto3", "redis", "psycopg2", "sqlalchemy", "pymongo", "pydantic",
+    "lightgbm", "xgboost", "jax", "jaxlib",
+}
+
 
 def _decode(src: bytes, node) -> str:
     return src[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
@@ -24,7 +49,7 @@ class InFileScopeAnalyzer:
     def visible_at(self, source: str, hole_byte: int) -> set[str]:
         tree = parse(source)
         src_bytes = source.encode("utf-8")
-        visible: set[str] = set(PYTHON_BUILTINS)
+        visible: set[str] = set(PYTHON_BUILTINS) | IMPLICIT_TOPLEVEL_PACKAGES
         visible |= self._collect_imports(tree.root_node, src_bytes)
         visible |= self._collect_module_level_names(tree.root_node, src_bytes)
         visible |= self._collect_local_names_up_to(tree.root_node, src_bytes, hole_byte)

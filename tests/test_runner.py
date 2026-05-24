@@ -137,12 +137,12 @@ def test_c4_cascade_writes_trigger_reason(tmp_path, instances):
         output_path=tmp_path / "c4.jsonl",
         progress=False,
     )
-    # cross_func is in repo but not in-file → static_crossfile fires.
+    # cross_func is in repo but not in-file → static cascade fires.
     assert summary.n_retrieved == 5
     with jsonlines.open(tmp_path / "c4.jsonl") as r:
         for rec in r:
-            assert rec["trigger_reason"] == "static_crossfile"
-            assert "cross_func" in rec["static_crossfile"]
+            assert rec["trigger_reason"] == "static"
+            assert "cross_func" in rec["static_out_of_scope"]
 
 
 def test_c4_cascade_requires_estimator(tmp_path, instances):
@@ -230,7 +230,7 @@ def test_records_match_section_15_1_schema(tmp_path, instances):
     required = {
         "instance_id", "repository", "target_file", "ground_truth",
         "prediction", "retrieved", "trigger_reason", "s_hat_0",
-        "static_unresolved", "static_crossfile", "metrics", "latency_ms",
+        "static_out_of_scope", "metrics", "latency_ms",
         "config", "dataset",
     }
     for rec in records:

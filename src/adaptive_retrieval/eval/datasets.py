@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator
 
 import jsonlines
 
@@ -100,6 +100,43 @@ def load_crosscodeeval_python(
                 target_file=target_file,
                 repository=meta.get("repository"),
             )
+
+
+# ---------- Cross-instance repository index ----------
+
+def build_repo_chunks_index(
+    instances: Iterable[Instance],
+) -> dict[str, dict[str, str]]:
+    """Group cross-file chunks across all instances of the same repository.
+
+    Per-instance, CCE ships only ~5 chunks selected by BM25 — a tiny slice of
+    the real repo's name space. When multiple instances belong to the same
+    repository, their chunk sets typically overlap partially. Unioning the
+    chunks per repo gives the analyzer a much larger symbol table to check
+    identifier resolution against, without changing what gets retrieved at
+    inference time (BM25 retrieval still operates per-instance).
+
+    The synthesised target-file content (x_left + ground_truth + x_right) is
+    excluded from the index — it's instance-specific.
+
+    Returns ``{repo_name: {filename: content}}`` where the value is built from
+    every cross-file chunk that any instance of this repo shipped. If the same
+    filename appears in multiple instances, contents are concatenated so that
+    no chunk's symbols are lost.
+    """
+    index: dict[str, dict[str, str]] = {}
+    for inst in instances:
+        if not inst.repository:
+            continue
+        bucket = index.setdefault(inst.repository, {})
+        for path, content in inst.repo_files.items():
+            if path == inst.target_file:
+                continue  # synthesised current-file content, instance-local
+            if path in bucket:
+                bucket[path] += "\n" + content
+            else:
+                bucket[path] = content
+    return index
 
 
 # ---------- RepoEval ----------

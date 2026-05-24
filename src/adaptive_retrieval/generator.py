@@ -273,12 +273,21 @@ class MLXGenerator(Generator):
             max_tokens=self.max_tokens,
             sampler=argmax_sampler,
         ):
-            tid = int(token.item())
+            # mlx-lm 0.31.x yields the token as a Python int, not mx.array
+            # (despite the docstring). int(...) handles both: Python int
+            # is idempotent, mx.array 0-D supports __int__.
+            tid = int(token)
             if self.eos_token_id is not None and tid == self.eos_token_id:
                 break
             token_ids.append(tid)
 
-            lp = np.asarray(log_probs, dtype=np.float64)
+            # log_probs is a bfloat16 mx.array on Apple Silicon. numpy can't
+            # read the bf16 buffer (PEP 3118 mismatch), so cast to float32
+            # in mlx-land first, then move to numpy.
+            if hasattr(log_probs, "astype"):
+                lp = np.asarray(log_probs.astype(mx.float32)).astype(np.float64)
+            else:
+                lp = np.asarray(log_probs, dtype=np.float64)
             # lp is shape (vocab_size,)
             chosen_lp = float(lp[tid])
             token_probs.append(float(np.exp(chosen_lp)))

@@ -11,9 +11,10 @@ Stage 2: if CARD's is_retrieve(ŷ₀, …) → retrieve and return ŷ_rag
 Stage 3: else if PredictionAnalyzer(ŷ₀, …).fires → retrieve and return ŷ_rag
 Otherwise: return ŷ₀.
 
-Trigger-reason priority within Stage 3: ``static_unresolved`` if any
-unresolved identifier was found, else ``static_crossfile``. Unresolved is a
-stronger hallucination signal than cross-file resolution.
+Stage 3 fires on a single signal: any used identifier in a structurally
+significant position that's not visible at the hole. The cross-file vs
+unresolved distinction the analyzer used to make is now diagnostic only —
+both lead to the same retrieve-and-regenerate action.
 """
 from __future__ import annotations
 
@@ -31,10 +32,9 @@ from .static_analysis.analyzer import PredictionAnalyzer
 class CascadeOutput:
     prediction: str
     retrieved: bool
-    trigger_reason: str            # one of "none", "card", "static_unresolved", "static_crossfile"
+    trigger_reason: str            # one of "none", "card", "static"
     s_hat_0: float                 # CARD's estimated ES for ŷ₀
-    static_unresolved: list[str] = field(default_factory=list)
-    static_crossfile: list[str] = field(default_factory=list)
+    static_out_of_scope: list[str] = field(default_factory=list)
     latency_ms: float = 0.0
 
 
@@ -77,18 +77,15 @@ def cascade_pipeline(
     # Stage 3: static-analysis gate on ŷ₀
     sa = analyzer.analyze(g0.prediction, x_left, x_right)
     if sa.fires:
-        # Unresolved is the stronger signal — give it priority when both present.
-        reason = "static_unresolved" if sa.unresolved_identifiers else "static_crossfile"
         g_rag = _retrieve_and_regenerate(
             generator, retriever, x_left, x_right, model_family, top_k
         )
         return CascadeOutput(
             prediction=g_rag.prediction,
             retrieved=True,
-            trigger_reason=reason,
+            trigger_reason="static",
             s_hat_0=s_hat_0,
-            static_unresolved=list(sa.unresolved_identifiers),
-            static_crossfile=list(sa.cross_file_identifiers),
+            static_out_of_scope=list(sa.significant_out_of_scope),
             latency_ms=g0.latency_ms + g_rag.latency_ms,
         )
 

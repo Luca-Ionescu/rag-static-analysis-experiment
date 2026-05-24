@@ -41,8 +41,9 @@ models/*.lgb
 models/*.txt
 
 # Results
-results/*.jsonl
-results/*.json
+results/
+analysis/
+logs/
 
 # Logs
 *.log

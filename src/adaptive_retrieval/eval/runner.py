@@ -34,7 +34,7 @@ from ..retriever import BM25Retriever
 from ..static_analysis.analyzer import PredictionAnalyzer
 from ..static_analysis.scope import InFileScopeAnalyzer
 from ..static_analysis.symbol_table import RepositorySymbolTable
-from .datasets import Instance
+from .datasets import Instance, build_repo_chunks_index
 
 VALID_CONFIGS: tuple[str, ...] = (
     "C1_no_retrieve",
@@ -67,8 +67,7 @@ def _build_record(
     latency_ms: float,
     analyzer: PredictionAnalyzer,
     s_hat_0: float | None = None,
-    static_unresolved: list[str] | None = None,
-    static_crossfile: list[str] | None = None,
+    static_out_of_scope: list[str] | None = None,
 ) -> dict:
     return {
         "instance_id": inst.instance_id,
@@ -79,8 +78,7 @@ def _build_record(
         "retrieved": retrieved,
         "trigger_reason": trigger_reason,
         "s_hat_0": s_hat_0,
-        "static_unresolved": static_unresolved or [],
-        "static_crossfile": static_crossfile or [],
+        "static_out_of_scope": static_out_of_scope or [],
         "metrics": {
             "exact_match": exact_match(inst.ground_truth, prediction),
             "edit_similarity": edit_similarity(inst.ground_truth, prediction),
@@ -152,8 +150,7 @@ def _run_single_instance(
             inst, casc.prediction, retrieved=casc.retrieved,
             trigger_reason=casc.trigger_reason, latency_ms=casc.latency_ms,
             analyzer=analyzer, s_hat_0=casc.s_hat_0,
-            static_unresolved=casc.static_unresolved,
-            static_crossfile=casc.static_crossfile,
+            static_out_of_scope=casc.static_out_of_scope,
         )
 
     if config == "C5_static_only":
@@ -168,8 +165,7 @@ def _run_single_instance(
                 inst, out_rag.prediction, retrieved=True, trigger_reason="static",
                 latency_ms=out_zs.latency_ms + out_rag.latency_ms,
                 analyzer=analyzer,
-                static_unresolved=list(sa.unresolved_identifiers),
-                static_crossfile=list(sa.cross_file_identifiers),
+                static_out_of_scope=list(sa.significant_out_of_scope),
             )
         return _build_record(
             inst, out_zs.prediction, retrieved=False, trigger_reason="none",
@@ -207,10 +203,17 @@ def run_experiment(
     t_rag: float = 0.9,
     top_k: int = 10,
     progress: bool = True,
+    use_repo_union: bool = True,
 ) -> RunSummary:
     """Run one config over a dataset. Writes per-instance records to JSONL.
 
-    Returns aggregate ``RunSummary``. Side effect: ``output_path`` is written.
+    Args:
+        use_repo_union: when True, the per-instance analyzer's symbol table
+            sees every cross-file chunk shipped by *any* instance of the same
+            repository (not just the current instance's 5 chunks). This is
+            the default since it materially reduces false-positive
+            hallucination flags without changing what gets retrieved at
+            inference. Disable for the static-strictness ablation (A1).
     """
     if config not in VALID_CONFIGS:
         raise ValueError(f"Unknown config: {config!r}. Valid: {VALID_CONFIGS}")
@@ -218,12 +221,15 @@ def run_experiment(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    iterator = instances
+    instances_list = list(instances)
+    repo_index = build_repo_chunks_index(instances_list) if use_repo_union else {}
+
+    iterator = instances_list
     if progress:
         try:
             from tqdm import tqdm
 
-            iterator = tqdm(instances, desc=f"{config}/{dataset_name}")
+            iterator = tqdm(instances_list, desc=f"{config}/{dataset_name}")
         except ImportError:
             pass
 
@@ -235,9 +241,16 @@ def run_experiment(
     with jsonlines.open(output_path, "w") as writer:
         for inst in iterator:
             retriever = BM25Retriever(inst.repo_files)
+            # Symbol table: per-repo union (if enabled) merged with this
+            # instance's target file. BM25 retrieval is unchanged — that uses
+            # only the instance's own 5 chunks.
+            sym_files: dict[str, str] = {}
+            if use_repo_union and inst.repository:
+                sym_files.update(repo_index.get(inst.repository, {}))
+            sym_files.update(inst.repo_files)
             analyzer = PredictionAnalyzer(
                 InFileScopeAnalyzer(),
-                RepositorySymbolTable.from_files(inst.repo_files),
+                RepositorySymbolTable.from_files(sym_files),
             )
             record = _run_single_instance(
                 config, inst, generator, retriever, analyzer, estimator,

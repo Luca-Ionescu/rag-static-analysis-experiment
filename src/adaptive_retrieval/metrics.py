@@ -80,9 +80,15 @@ def hallucination_flag(
     x_right: str,
     analyzer: PredictionAnalyzer,
 ) -> bool:
-    """True iff the prediction contains at least one unresolved identifier."""
+    """True iff the prediction contains at least one identifier in a
+    structurally significant position (call target / attribute receiver /
+    subscript value / class base / decorator / exception type / raise target)
+    that is not visible at the hole. Bare identifiers in expression positions
+    don't count — they're typically local variables our scope analysis can't
+    see.
+    """
     result = analyzer.analyze(prediction, x_left, x_right)
-    return bool(result.unresolved_identifiers)
+    return bool(result.significant_out_of_scope)
 
 
 # ---------- efficiency (aggregate) ----------

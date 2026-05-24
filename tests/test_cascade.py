@@ -73,9 +73,8 @@ def test_card_below_threshold_triggers_retrieval():
     assert out.trigger_reason == "card"
     assert out.s_hat_0 == pytest.approx(0.5)
     assert out.prediction == "real_func()"
-    # CARD path doesn't populate static fields.
-    assert out.static_unresolved == []
-    assert out.static_crossfile == []
+    # CARD path doesn't populate the static field.
+    assert out.static_out_of_scope == []
     assert len(gen.call_log) == 2  # zero-shot + RAG
 
 
@@ -93,13 +92,12 @@ def test_high_confidence_clean_prediction_no_retrieval():
     assert not out.retrieved
     assert out.trigger_reason == "none"
     assert out.prediction == "pass"
-    assert out.static_unresolved == []
-    assert out.static_crossfile == []
+    assert out.static_out_of_scope == []
     # Only the zero-shot generator call happened.
     assert len(gen.call_log) == 1
 
 
-def test_high_confidence_unresolved_identifier_triggers_static_unresolved():
+def test_high_confidence_unresolved_identifier_triggers_static():
     # ŝ₀ high; prediction uses a name that's not in-file, not in repo, not builtin.
     gen = _BranchedMock(
         zs_pred="totally_made_up_name()",
@@ -114,17 +112,17 @@ def test_high_confidence_unresolved_identifier_triggers_static_unresolved():
         x_left="def f():\n    return ", x_right="\n",
     )
     assert out.retrieved
-    assert out.trigger_reason == "static_unresolved"
-    assert "totally_made_up_name" in out.static_unresolved
+    assert out.trigger_reason == "static"
+    assert "totally_made_up_name" in out.static_out_of_scope
     # Final prediction is the RAG one.
     assert out.prediction == "real_func()"
     assert len(gen.call_log) == 2
 
 
-def test_high_confidence_crossfile_identifier_triggers_static_crossfile():
+def test_high_confidence_crossfile_identifier_triggers_static():
     # Prediction uses a name that resolves in the repo (cross_func in lib.py)
-    # but not in the in-file context. Only static_crossfile (not unresolved)
-    # should fire.
+    # but not in the in-file context. Under the unified trigger this still
+    # fires with trigger_reason="static" — we no longer distinguish.
     gen = _BranchedMock(
         zs_pred="cross_func()",
         rag_pred="local_helper_after_retrieve()",
@@ -138,15 +136,13 @@ def test_high_confidence_crossfile_identifier_triggers_static_crossfile():
         x_left="def f():\n    return ", x_right="\n",
     )
     assert out.retrieved
-    assert out.trigger_reason == "static_crossfile"
-    assert "cross_func" in out.static_crossfile
-    # Unresolved should be empty for this case (no hallucinated names).
-    assert out.static_unresolved == []
+    assert out.trigger_reason == "static"
+    assert "cross_func" in out.static_out_of_scope
 
 
-def test_unresolved_takes_precedence_over_crossfile():
-    # Prediction has BOTH a cross-file name AND an unresolved name.
-    # By design, `static_unresolved` wins (stronger hallucination signal).
+def test_mixed_unresolved_and_crossfile_both_in_out_of_scope_list():
+    # Prediction has BOTH a cross-file name AND an unresolved name. Both
+    # appear in the unified out-of-scope list.
     gen = _BranchedMock(
         zs_pred="totally_fake() + cross_func()",
         rag_pred="real_func()",
@@ -160,9 +156,9 @@ def test_unresolved_takes_precedence_over_crossfile():
         x_left="def f():\n    return ", x_right="\n",
     )
     assert out.retrieved
-    assert out.trigger_reason == "static_unresolved"
-    assert "totally_fake" in out.static_unresolved
-    assert "cross_func" in out.static_crossfile  # still populated for diagnostics
+    assert out.trigger_reason == "static"
+    assert "totally_fake" in out.static_out_of_scope
+    assert "cross_func" in out.static_out_of_scope
 
 
 # ---------- semantic checks ----------

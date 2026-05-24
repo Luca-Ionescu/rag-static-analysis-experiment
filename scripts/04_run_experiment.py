@@ -74,9 +74,9 @@ def _resolve_generator(backend: str, model: str, max_tokens: int, cache_dir: str
 )
 @click.option(
     "--backend",
-    type=click.Choice(["mock", "hf", "vllm"]),
+    type=click.Choice(["mock", "hf", "vllm", "mlx"]),
     default="mock",
-    help="Generator backend. mock = no model.",
+    help="Generator backend. mock = no model; mlx = Apple Silicon native.",
 )
 @click.option("--model", default="Qwen/Qwen2.5-Coder-7B", help="HF model name.")
 @click.option("--max-tokens", default=50, type=int)
