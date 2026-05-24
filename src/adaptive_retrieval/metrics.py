@@ -63,15 +63,18 @@ def repository_symbol_precision(
     x_right: str,
     analyzer: PredictionAnalyzer,
 ) -> float:
-    """Fraction of non-trivial identifiers in the prediction that resolve
-    (in-file or anywhere in the repo). Higher = fewer hallucinations.
+    """Fraction of identifiers in the prediction that are visible at the hole.
+
+    Under the unified Tier 1 design this is purely a scope check — it does
+    not consult the repository symbol table. The metric is a descriptive
+    continuous companion to the binary ``hallucination_flag``.
     """
     result = analyzer.analyze(prediction, x_left, x_right)
     n_total = result.n_used_identifiers
     if n_total == 0:
         return 1.0
-    n_unresolved = len(result.unresolved_identifiers)
-    return (n_total - n_unresolved) / n_total
+    n_out_of_scope = len(result.out_of_scope_identifiers)
+    return (n_total - n_out_of_scope) / n_total
 
 
 def hallucination_flag(
@@ -80,15 +83,18 @@ def hallucination_flag(
     x_right: str,
     analyzer: PredictionAnalyzer,
 ) -> bool:
-    """True iff the prediction contains at least one identifier in a
-    structurally significant position (call target / attribute receiver /
-    subscript value / class base / decorator / exception type / raise target)
-    that is not visible at the hole. Bare identifiers in expression positions
-    don't count — they're typically local variables our scope analysis can't
-    see.
+    """True iff any static-analysis tier found something: an out-of-scope
+    identifier in a significant position (Tier 1), a signature mismatch
+    (Tier 2), or a wrong-origin import (Tier 3). Independent of which tiers
+    are enabled at trigger time — reflects what the analyzer actually found,
+    not whether the cascade would have acted on it.
     """
     result = analyzer.analyze(prediction, x_left, x_right)
-    return bool(result.significant_out_of_scope)
+    return (
+        bool(result.significant_out_of_scope)
+        or bool(result.signature_issues)
+        or bool(result.import_issues)
+    )
 
 
 # ---------- efficiency (aggregate) ----------

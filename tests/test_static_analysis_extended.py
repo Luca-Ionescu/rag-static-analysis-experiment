@@ -24,13 +24,21 @@ def empty_analyzer(tmp_path):
 
 @pytest.fixture
 def repo_with(tmp_path):
-    """Factory: create a tiny repo with the given filename->content map."""
+    """Factory: create a tiny repo with the given filename->content map.
+
+    Under the unified Tier 1 design, the cross-file vs unresolved distinction
+    no longer affects firing — any out-of-scope name in a significant position
+    fires regardless of whether it happens to be in the repo symbol table.
+    """
     def _make(files: dict[str, str]):
         repo = tmp_path / "repo"
         repo.mkdir(exist_ok=True)
         for name, content in files.items():
             (repo / name).write_text(content)
-        return PredictionAnalyzer(InFileScopeAnalyzer(), RepositorySymbolTable(repo))
+        return PredictionAnalyzer(
+            InFileScopeAnalyzer(),
+            RepositorySymbolTable(repo),
+        )
     return _make
 
 
@@ -44,7 +52,7 @@ def test_01_hallucinated_function(empty_analyzer):
         x_right="\n",
     )
     assert r.fires
-    assert "totally_fake" in r.unresolved_identifiers
+    assert "totally_fake" in r.out_of_scope_identifiers
 
 
 def test_02_locally_defined_function(empty_analyzer):
@@ -64,11 +72,12 @@ def test_03_builtin_function(empty_analyzer):
         x_left="def f(x):\n    ",
         x_right="\n",
     )
-    assert not r.fires, f"Unexpected fire: {r.unresolved_identifiers}"
+    assert not r.fires, f"Unexpected fire: {r.out_of_scope_identifiers}"
 
 
 def test_04_cross_file_resolved(repo_with):
-    """Name defined in another repo file -> fires as cross_file."""
+    """A name defined in another repo file is out of scope at the hole and
+    fires under the unified Tier 1 signal."""
     analyzer = repo_with({
         "lib.py": "def cross_func():\n    return 42\n",
     })
@@ -78,7 +87,8 @@ def test_04_cross_file_resolved(repo_with):
         x_right="\n",
     )
     assert r.fires
-    assert "cross_func" in r.cross_file_identifiers
+    assert "cross_func" in r.out_of_scope_identifiers
+    assert "cross_func" in r.significant_out_of_scope
 
 
 # ---------- IMPORTS ----------
@@ -255,7 +265,7 @@ def test_20_super_call(empty_analyzer):
     )
     # 'Base' might fire as unresolved; that's fine for our purposes.
     # But 'super' must not.
-    assert "super" not in r.unresolved_identifiers
+    assert "super" not in r.out_of_scope_identifiers
 
 
 # ---------- ROBUSTNESS ----------
@@ -267,7 +277,7 @@ def test_21_syntactically_broken_prediction(empty_analyzer):
         x_left="def f():\n    return ",
         x_right="\n",
     )
-    assert "foo" in r.unresolved_identifiers
+    assert "foo" in r.out_of_scope_identifiers
 
 
 def test_22_empty_prediction(empty_analyzer):

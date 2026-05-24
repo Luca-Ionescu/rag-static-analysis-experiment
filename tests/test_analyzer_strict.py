@@ -49,7 +49,7 @@ def test_bare_unresolved_in_binop_does_not_fire(empty_analyzer):
     )
     assert not r.fires
     # But the loose list should still record it for diagnostics.
-    assert "made_up_var" in r.unresolved_identifiers
+    assert "made_up_var" in r.out_of_scope_identifiers
 
 
 def test_bare_unresolved_arg_to_known_call_does_not_fire(empty_analyzer):
@@ -62,7 +62,7 @@ def test_bare_unresolved_arg_to_known_call_does_not_fire(empty_analyzer):
         x_right="\n",
     )
     assert not r.fires
-    assert "unresolved_var" in r.unresolved_identifiers
+    assert "unresolved_var" in r.out_of_scope_identifiers
 
 
 def test_bare_unresolved_return_value_does_not_fire(empty_analyzer):
@@ -73,7 +73,7 @@ def test_bare_unresolved_return_value_does_not_fire(empty_analyzer):
         x_right="\n",
     )
     assert not r.fires
-    assert "some_local_thing" in r.unresolved_identifiers
+    assert "some_local_thing" in r.out_of_scope_identifiers
 
 
 def test_bare_unresolved_assignment_rhs_does_not_fire(empty_analyzer):
@@ -107,7 +107,7 @@ def test_unresolved_call_target_fires(empty_analyzer):
     )
     assert r.fires
     assert "fake_function_call" in r.significant_out_of_scope
-    assert "fake_function_call" in r.unresolved_identifiers
+    assert "fake_function_call" in r.out_of_scope_identifiers
 
 
 def test_unresolved_attribute_receiver_fires(empty_analyzer):
@@ -143,7 +143,7 @@ def test_unresolved_call_target_with_bare_args_fires_on_call_only(empty_analyzer
     )
     assert r.fires
     assert "fake_func" in r.significant_out_of_scope
-    assert "unresolved_x" in r.unresolved_identifiers
+    assert "unresolved_x" in r.out_of_scope_identifiers
     assert "unresolved_x" not in r.significant_out_of_scope
 
 
@@ -154,7 +154,7 @@ def test_crossfile_call_target_fires(repo_with):
 
     The cascade no longer distinguishes cross-file vs unresolved at the
     trigger level; both are out-of-scope at a significant position and
-    both fire. The loose ``cross_file_identifiers`` list remains for RSP.
+    both fire. The loose ``out_of_scope_identifiers`` list remains for RSP.
     """
     analyzer = repo_with({"lib.py": "def repo_func():\n    return 1\n"})
     r = analyzer.analyze(
@@ -165,7 +165,7 @@ def test_crossfile_call_target_fires(repo_with):
     assert r.fires
     assert "repo_func" in r.significant_out_of_scope
     # Still classified in the loose list as cross-file for diagnostics.
-    assert "repo_func" in r.cross_file_identifiers
+    assert "repo_func" in r.out_of_scope_identifiers
 
 
 def test_crossfile_bare_does_not_fire(repo_with):
@@ -180,7 +180,7 @@ def test_crossfile_bare_does_not_fire(repo_with):
     )
     assert not r.fires
     # Still appears in the loose list for diagnostics.
-    assert "REPO_CONST" in r.cross_file_identifiers
+    assert "REPO_CONST" in r.out_of_scope_identifiers
 
 
 # ---------- significant subset contract ----------
@@ -194,18 +194,17 @@ def test_significant_out_of_scope_is_subset_of_used(empty_analyzer):
         x_right="\n",
     )
     for n in r.significant_out_of_scope:
-        assert n in r.unresolved_identifiers or n in r.cross_file_identifiers
+        assert n in r.out_of_scope_identifiers
 
 
 def test_resolved_names_never_appear_in_either_list(empty_analyzer):
-    """`helper(x)` where both are in scope — no entries in either bucket."""
+    """`helper(x)` where both are in scope — no out-of-scope entries."""
     r = empty_analyzer.analyze(
         prediction="helper(x)",
         x_left="def helper(x):\n    return x\n\ndef caller(x):\n    return ",
         x_right="\n",
     )
-    assert r.unresolved_identifiers == []
-    assert r.cross_file_identifiers == []
+    assert r.out_of_scope_identifiers == []
     assert r.significant_out_of_scope == []
     assert not r.fires
 

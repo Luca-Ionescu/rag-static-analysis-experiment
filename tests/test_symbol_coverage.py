@@ -172,13 +172,13 @@ def test_analyzer_with_repo_union_resolves_more_names():
     r_union = analyzer_union.analyze(prediction, x_left, x_right)
     r_alone = analyzer_alone.analyze(prediction, x_left, x_right)
 
-    # Under the union: validate_input is cross-file (resolves in repo, not in-file)
-    assert "validate_input" in r_union.cross_file_identifiers
-    assert "validate_input" not in r_union.unresolved_identifiers
-
-    # Without the union: validate_input is unresolved
-    assert "validate_input" in r_alone.unresolved_identifiers
-    assert "validate_input" not in r_alone.cross_file_identifiers
+    # Tier 1 no longer depends on the symbol table — both analyzers should
+    # report the same out-of-scope behaviour. validate_input is not visible
+    # in the in-file scope, so it's out of scope in both cases.
+    assert "validate_input" in r_union.out_of_scope_identifiers
+    assert "validate_input" in r_alone.out_of_scope_identifiers
+    assert r_union.significant_out_of_scope == r_alone.significant_out_of_scope
+    assert r_union.fires == r_alone.fires
 
 
 # ---------- A3: implicit top-level package whitelist ----------
@@ -211,7 +211,7 @@ def test_unimported_stdlib_receiver_does_not_fire(tmp_path):
         x_right="\n",
     )
     assert not r.fires
-    assert "os" not in r.unresolved_identifiers
+    assert "os" not in r.out_of_scope_identifiers
 
 
 def test_unimported_numpy_receiver_does_not_fire(tmp_path):
@@ -228,7 +228,7 @@ def test_unimported_numpy_receiver_does_not_fire(tmp_path):
         x_right="\n",
     )
     assert not r.fires
-    assert "numpy" not in r.unresolved_identifiers
+    assert "numpy" not in r.out_of_scope_identifiers
 
 
 def test_random_unrecognised_package_still_fires(tmp_path):

@@ -12,7 +12,7 @@ Per-instance JSONL schema follows §15.1. Aggregates follow §15.2.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Iterable
 
@@ -35,6 +35,18 @@ from ..static_analysis.analyzer import PredictionAnalyzer
 from ..static_analysis.scope import InFileScopeAnalyzer
 from ..static_analysis.symbol_table import RepositorySymbolTable
 from .datasets import Instance, build_repo_chunks_index
+
+
+def _serialise(items) -> list[dict]:
+    """Convert a list of CallIssue / ImportIssue dataclasses to dicts."""
+    out: list[dict] = []
+    for it in items or ():
+        if is_dataclass(it):
+            out.append(asdict(it))
+        elif isinstance(it, dict):
+            out.append(it)
+    return out
+
 
 VALID_CONFIGS: tuple[str, ...] = (
     "C1_no_retrieve",
@@ -68,6 +80,8 @@ def _build_record(
     analyzer: PredictionAnalyzer,
     s_hat_0: float | None = None,
     static_out_of_scope: list[str] | None = None,
+    signature_issues: list | None = None,
+    import_issues: list | None = None,
 ) -> dict:
     return {
         "instance_id": inst.instance_id,
@@ -79,6 +93,8 @@ def _build_record(
         "trigger_reason": trigger_reason,
         "s_hat_0": s_hat_0,
         "static_out_of_scope": static_out_of_scope or [],
+        "signature_issues": signature_issues or [],
+        "import_issues": import_issues or [],
         "metrics": {
             "exact_match": exact_match(inst.ground_truth, prediction),
             "edit_similarity": edit_similarity(inst.ground_truth, prediction),
@@ -151,6 +167,8 @@ def _run_single_instance(
             trigger_reason=casc.trigger_reason, latency_ms=casc.latency_ms,
             analyzer=analyzer, s_hat_0=casc.s_hat_0,
             static_out_of_scope=casc.static_out_of_scope,
+            signature_issues=casc.signature_issues,
+            import_issues=casc.import_issues,
         )
 
     if config == "C5_static_only":
@@ -166,10 +184,15 @@ def _run_single_instance(
                 latency_ms=out_zs.latency_ms + out_rag.latency_ms,
                 analyzer=analyzer,
                 static_out_of_scope=list(sa.significant_out_of_scope),
+                signature_issues=_serialise(sa.signature_issues),
+                import_issues=_serialise(sa.import_issues),
             )
         return _build_record(
             inst, out_zs.prediction, retrieved=False, trigger_reason="none",
             latency_ms=out_zs.latency_ms, analyzer=analyzer,
+            static_out_of_scope=list(sa.significant_out_of_scope),
+            signature_issues=_serialise(sa.signature_issues),
+            import_issues=_serialise(sa.import_issues),
         )
 
     if config == "C6_oracle":

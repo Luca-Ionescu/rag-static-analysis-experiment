@@ -112,7 +112,7 @@ def test_high_confidence_unresolved_identifier_triggers_static():
         x_left="def f():\n    return ", x_right="\n",
     )
     assert out.retrieved
-    assert out.trigger_reason == "static"
+    assert out.trigger_reason == "static_out_of_scope"
     assert "totally_made_up_name" in out.static_out_of_scope
     # Final prediction is the RAG one.
     assert out.prediction == "real_func()"
@@ -136,7 +136,7 @@ def test_high_confidence_crossfile_identifier_triggers_static():
         x_left="def f():\n    return ", x_right="\n",
     )
     assert out.retrieved
-    assert out.trigger_reason == "static"
+    assert out.trigger_reason == "static_out_of_scope"
     assert "cross_func" in out.static_out_of_scope
 
 
@@ -156,7 +156,7 @@ def test_mixed_unresolved_and_crossfile_both_in_out_of_scope_list():
         x_left="def f():\n    return ", x_right="\n",
     )
     assert out.retrieved
-    assert out.trigger_reason == "static"
+    assert out.trigger_reason == "static_out_of_scope"
     assert "totally_fake" in out.static_out_of_scope
     assert "cross_func" in out.static_out_of_scope
 

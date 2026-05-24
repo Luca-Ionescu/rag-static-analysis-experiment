@@ -141,7 +141,7 @@ def test_c4_cascade_writes_trigger_reason(tmp_path, instances):
     assert summary.n_retrieved == 5
     with jsonlines.open(tmp_path / "c4.jsonl") as r:
         for rec in r:
-            assert rec["trigger_reason"] == "static"
+            assert rec["trigger_reason"] == "static_out_of_scope"
             assert "cross_func" in rec["static_out_of_scope"]
 
 
@@ -174,6 +174,8 @@ def test_c5_static_only(tmp_path, instances):
     assert summary.n_retrieved == 5
     with jsonlines.open(tmp_path / "c5.jsonl") as r:
         for rec in r:
+            # C5 uses a literal "static" reason (it's a single-tier ablation,
+            # not the cascade's three-tier precedence).
             assert rec["trigger_reason"] == "static"
 
 
