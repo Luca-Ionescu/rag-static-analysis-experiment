@@ -74,6 +74,24 @@ phase() {
 
 # ---------- Phase 1: setup ----------
 phase "1/6 Setup"
+
+# Pick the Python interpreter that pip targets (the runpod/pytorch image
+# ships multiple Python versions; pip and the image's preinstalled
+# packages live under the highest one, often python3.13). All subsequent
+# `python` / `pip` invocations use this binary to avoid the install-here-
+# import-there split.
+if command -v python3.13 >/dev/null 2>&1; then
+    PY=python3.13
+elif command -v python3.12 >/dev/null 2>&1; then
+    PY=python3.12
+elif command -v python3.11 >/dev/null 2>&1; then
+    PY=python3.11
+else
+    PY=python3
+fi
+echo "[setup] using $PY ($($PY --version 2>&1))"
+PIP="$PY -m pip"
+
 if [[ -d "$WORK_DIR" && ! -d "$WORK_DIR/.git" ]]; then
     echo "[setup] $WORK_DIR exists but is not a git checkout; clearing it"
     rm -rf "$WORK_DIR"
@@ -98,7 +116,7 @@ echo "[setup] log file: $LOG_DIR/master.log"
 if [[ -f requirements-runpod.txt ]]; then
     # Show pip progress live (no -q) so users can see what's happening
     # during the 5-15 minute vllm + torch install.
-    pip install -r requirements-runpod.txt --progress-bar on
+    $PIP install -r requirements-runpod.txt --progress-bar on
 else
     echo "[error] requirements-runpod.txt not found. Are you on main?" >&2
     exit 1
@@ -108,7 +126,7 @@ mkdir -p data/training_data models "results/codellama_7b" data/generation_cache
 
 # ---------- Phase 2: model download ----------
 phase "2/6 Model download (CodeLlama-7B)"
-python - <<PY
+$PY - <<PY
 import os
 from huggingface_hub import snapshot_download
 snapshot_download("$MODEL", token=os.environ["HF_TOKEN"])
@@ -121,7 +139,7 @@ if [[ -f "$TRAIN_NPZ" ]]; then
     echo "[skip] $TRAIN_NPZ already exists"
 else
     phase "3/6 Calibration training data (~2-3h)"
-    python scripts/01_construct_training_data.py \
+    $PY scripts/01_construct_training_data.py \
         --source the-stack-smol \
         --backend vllm \
         --model "$MODEL" \
@@ -140,7 +158,7 @@ if [[ -f "$ESTIMATOR" ]]; then
     echo "[skip] $ESTIMATOR already exists"
 else
     phase "4/6 Train LightGBM Estimator"
-    python scripts/02_train_estimator.py \
+    $PY scripts/02_train_estimator.py \
         --data "$TRAIN_NPZ" \
         --output "$ESTIMATOR" \
         --num-boost-round 100 \
@@ -159,7 +177,7 @@ run_config() {
         echo "[skip] $out already exists"
         return 0
     fi
-    python scripts/04_run_experiment.py \
+    $PY scripts/04_run_experiment.py \
         --config "$cfg" \
         --dataset "$DATASET" \
         --backend vllm \
@@ -179,7 +197,7 @@ run_config C4_cascade --estimator-path "$ESTIMATOR"
 
 # ---------- Phase 6: upload artifacts to HF Hub ----------
 phase "6/6 Upload artifacts to HuggingFace Hub"
-python - <<PY
+$PY - <<PY
 import os, pathlib, glob, sys
 from huggingface_hub import HfApi, create_repo
 
