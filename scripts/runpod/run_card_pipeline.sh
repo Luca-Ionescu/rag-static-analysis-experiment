@@ -96,7 +96,9 @@ echo "[setup] log file: $LOG_DIR/master.log"
 # runpod/pytorch:0.7.0-cu1281-torch271 image). The main requirements.txt
 # is for local Mac/mlx development and pins an older vLLM/torch combo.
 if [[ -f requirements-runpod.txt ]]; then
-    pip install -r requirements-runpod.txt -q
+    # Show pip progress live (no -q) so users can see what's happening
+    # during the 5-15 minute vllm + torch install.
+    pip install -r requirements-runpod.txt --progress-bar on
 else
     echo "[error] requirements-runpod.txt not found. Are you on main?" >&2
     exit 1
