@@ -60,11 +60,10 @@ if [[ "$AUTO_TERMINATE" == "true" ]]; then
 fi
 export HF_TOKEN
 
-# ---------- structured logging to file + stdout ----------
+# Logging timestamp (the LOG_DIR is created AFTER the clone — creating it
+# beforehand would materialize WORK_DIR as a side effect and break the
+# subsequent git clone).
 LOG_TS=$(date +%Y%m%d_%H%M%S)
-LOG_DIR="${WORK_DIR}/logs/runpod_${LOG_TS}"
-mkdir -p "$LOG_DIR"
-exec > >(tee -a "$LOG_DIR/master.log") 2>&1
 
 phase() {
     echo
@@ -86,6 +85,12 @@ cd "$WORK_DIR"
 git fetch origin
 git checkout main
 git pull --rebase --autostash || true
+
+# Now that WORK_DIR is a valid clone, set up the structured log file.
+LOG_DIR="${WORK_DIR}/logs/runpod_${LOG_TS}"
+mkdir -p "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/master.log") 2>&1
+echo "[setup] log file: $LOG_DIR/master.log"
 
 # Install the runpod-specific requirements (matches the
 # runpod/pytorch:0.7.0-cu1281-torch271 image). The main requirements.txt
