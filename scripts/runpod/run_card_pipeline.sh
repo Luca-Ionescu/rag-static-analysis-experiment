@@ -75,6 +75,10 @@ phase() {
 
 # ---------- Phase 1: setup ----------
 phase "1/6 Setup"
+if [[ -d "$WORK_DIR" && ! -d "$WORK_DIR/.git" ]]; then
+    echo "[setup] $WORK_DIR exists but is not a git checkout; clearing it"
+    rm -rf "$WORK_DIR"
+fi
 if [[ ! -d "$WORK_DIR/.git" ]]; then
     git clone "$REPO_URL" "$WORK_DIR"
 fi
