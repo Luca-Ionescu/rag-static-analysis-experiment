@@ -60,13 +60,15 @@ if [[ "$AUTO_TERMINATE" == "true" ]]; then
 fi
 export HF_TOKEN
 
-# Force the HuggingFace cache onto the container disk (80 GB) rather than
-# the small volume disk at /workspace. The runpod/pytorch image sometimes
-# defaults HF_HOME to /workspace/huggingface_cache, which runs out of space
-# during CodeLlama-7B download (~13 GB + xet scratch).
-export HF_HOME="${HF_HOME:-/root/.cache/huggingface}"
-export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
+# Force the HuggingFace cache onto the container disk (~70 GB free).
+# RunPod's pytorch image pre-sets HF_HOME=/workspace/.cache/huggingface,
+# but /workspace is a network mount with a per-pod 20 GB quota that
+# CodeLlama-7B (13 GB raw + xet scratch) blows through. Override
+# unconditionally — using `=` not `:=` so we replace any inherited value.
+export HF_HOME=/root/.cache/huggingface
+export HF_HUB_CACHE=$HF_HOME/hub
 mkdir -p "$HF_HOME" "$HF_HUB_CACHE"
+echo "[setup] HF_HOME=$HF_HOME"
 
 # Logging timestamp (the LOG_DIR is created AFTER the clone — creating it
 # beforehand would materialize WORK_DIR as a side effect and break the
