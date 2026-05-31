@@ -82,7 +82,17 @@ cd "$WORK_DIR"
 git fetch origin
 git checkout main
 git pull --rebase --autostash || true
-pip install -r requirements.txt -q
+
+# Install the runpod-specific requirements (matches the
+# runpod/pytorch:0.7.0-cu1281-torch271 image). The main requirements.txt
+# is for local Mac/mlx development and pins an older vLLM/torch combo.
+if [[ -f requirements-runpod.txt ]]; then
+    pip install -r requirements-runpod.txt -q
+else
+    echo "[error] requirements-runpod.txt not found. Are you on main?" >&2
+    exit 1
+fi
+
 mkdir -p data/training_data models "results/codellama_7b" data/generation_cache
 
 # ---------- Phase 2: model download ----------

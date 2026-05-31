@@ -1,0 +1,47 @@
+# Dependencies for the RunPod A100 pipeline.
+#
+# Used by scripts/runpod/run_card_pipeline.sh on top of the
+# `runpod/pytorch:0.7.0-cu1281-torch271-ubuntu2204` base image, which
+# already provides torch 2.7.1 + CUDA 12.8.1. We pin vLLM to a version
+# that supports torch 2.7 and let pip resolve the small patch-version
+# delta.
+#
+# The main requirements.txt stays pinned to the older vLLM/torch combo
+# used in local Mac development, so this file exists in parallel.
+
+# vLLM compatible with torch 2.7
+vllm==0.9.2
+
+# Everything else from requirements.txt that doesn't conflict with the
+# image's preinstalled torch / CUDA stack.
+numpy==1.26.4
+scipy==1.13.0
+scikit-learn==1.5.0
+
+# transformers must be >=4.46 to work with vLLM 0.9
+transformers>=4.46
+accelerate>=0.34
+
+# Data
+datasets==2.20.0
+huggingface-hub>=0.24
+
+# Static analysis
+tree-sitter==0.23.2
+tree-sitter-python==0.23.6
+
+# Retrieval
+rank-bm25==0.2.2
+
+# Metrics
+python-Levenshtein==0.25.1
+
+# ML for CARD's Estimator
+lightgbm==4.5.0
+xgboost==2.1.0
+
+# Utilities
+tqdm==4.66.4
+pydantic==2.8.0
+jsonlines==4.0.0
+click==8.1.7
