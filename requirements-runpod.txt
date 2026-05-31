@@ -14,8 +14,12 @@
 # vLLM compatible with Python 3.13
 vllm==0.10.2
 
-# transformers compatible with vllm 0.10.2
-transformers>=4.55.2
+# transformers compatible with vllm 0.10.2.
+# Upper-bound at <5.0 because transformers 5.x removed
+# `tokenizer.all_special_tokens_extended`, which vllm 0.10.2 still
+# calls when loading CodeLlama's slow tokenizer — fails at LLM(...)
+# init time with AttributeError.
+transformers>=4.55.2,<5.0
 accelerate
 
 # Numerics — leave unpinned so pip can match transformers' numpy>=2
