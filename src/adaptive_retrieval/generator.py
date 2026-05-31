@@ -145,7 +145,15 @@ class VLLMGenerator(Generator):
     ):
         from vllm import LLM, SamplingParams
 
-        self.llm = LLM(model=model_name, dtype=dtype)
+        # max_logprobs caps how many per-token logprobs the engine will
+        # return. vLLM >=0.10 defaults to 20; we ask for top_k_for_entropy
+        # (=50, matching CARD §3.4 Table 1) and the engine refuses unless
+        # we raise the ceiling explicitly.
+        self.llm = LLM(
+            model=model_name,
+            dtype=dtype,
+            max_logprobs=top_k_for_entropy,
+        )
         self.sampling_params = SamplingParams(
             temperature=0.0,
             max_tokens=max_tokens,
