@@ -96,7 +96,7 @@ phase() {
 }
 
 # ---------- Phase 1: setup ----------
-phase "1/6 Setup"
+phase "1/7 Setup"
 
 # Pick the Python interpreter that pip targets (the runpod/pytorch image
 # ships multiple Python versions; pip and the image's preinstalled
@@ -148,7 +148,7 @@ fi
 mkdir -p data/training_data models "results/codellama_7b" data/generation_cache
 
 # ---------- Phase 2: model download ----------
-phase "2/6 Model download (CodeLlama-7B)"
+phase "2/7 Model download (CodeLlama-7B)"
 $PY - <<PY
 import os
 from huggingface_hub import snapshot_download
@@ -161,7 +161,7 @@ TRAIN_NPZ="data/training_data/codellama_7b.npz"
 if [[ -f "$TRAIN_NPZ" ]]; then
     echo "[skip] $TRAIN_NPZ already exists"
 else
-    phase "3/6 Calibration training data (~2-3h)"
+    phase "3/7 Calibration training data (~2-3h)"
     $PY scripts/01_construct_training_data.py \
         --source the-stack-dedup \
         --file-limit "$FILE_LIMIT" \
@@ -183,7 +183,7 @@ ESTIMATOR="models/estimator_codellama_7b.lgb"
 if [[ -f "$ESTIMATOR" ]]; then
     echo "[skip] $ESTIMATOR already exists"
 else
-    phase "4/6 Train LightGBM Estimator"
+    phase "4/7 Train LightGBM Estimator"
     $PY scripts/02_train_estimator.py \
         --data "$TRAIN_NPZ" \
         --output "$ESTIMATOR" \
@@ -191,8 +191,39 @@ else
         2>&1 | tee "$LOG_DIR/train_estimator.log"
 fi
 
-# ---------- Phase 5: run C1-C4 on CCE-Python ----------
-phase "5/6 Benchmark C1-C4 on CCE-Python (~1.5h)"
+# ---------- Phase 5: prepare benchmark data (CCE-Python) ----------
+# data/ is gitignored (the full 847 MB CrossCodeEval corpus is too large to
+# track), so the benchmark JSONL does NOT arrive via `git clone`. We ship only
+# the single file the Python benchmark consumes — line_completion_rg1_bm25.jsonl,
+# 2665 instances — as a 4.4 MB gzipped asset committed under
+# scripts/runpod/assets/, and decompress it here into the exact path the loader
+# (src/adaptive_retrieval/eval/datasets.py:DEFAULT_CCE_PYTHON_PATH) expects.
+# Idempotent: skips if the JSONL is already present.
+phase "5/7 Prepare benchmark data (CCE-Python)"
+CCE_JSONL="data/crosscodeeval/crosscodeeval_data/python/line_completion_rg1_bm25.jsonl"
+CCE_ARCHIVE="scripts/runpod/assets/cce_python_rg1_bm25.jsonl.gz"
+EXPECTED_CCE_LINES=2665
+if [[ -s "$CCE_JSONL" ]]; then
+    echo "[skip] $CCE_JSONL already present ($(wc -l < "$CCE_JSONL") lines)"
+else
+    if [[ ! -f "$CCE_ARCHIVE" ]]; then
+        echo "[error] benchmark archive missing: $CCE_ARCHIVE" >&2
+        echo "        It is committed to the repo — are you on an up-to-date main?" >&2
+        exit 1
+    fi
+    mkdir -p "$(dirname "$CCE_JSONL")"
+    gunzip -c "$CCE_ARCHIVE" > "$CCE_JSONL"
+    lines=$(wc -l < "$CCE_JSONL")
+    echo "[prep] decompressed $CCE_ARCHIVE -> $CCE_JSONL ($lines lines)"
+    if [[ "$lines" -ne "$EXPECTED_CCE_LINES" ]]; then
+        echo "[error] expected $EXPECTED_CCE_LINES instances, got $lines — archive looks corrupt." >&2
+        rm -f "$CCE_JSONL"
+        exit 1
+    fi
+fi
+
+# ---------- Phase 6: run C1-C4 on CCE-Python ----------
+phase "6/7 Benchmark C1-C4 on CCE-Python (~1.5h)"
 RESULTS_DIR="results/codellama_7b"
 
 run_config() {
@@ -221,8 +252,8 @@ run_config C2_always_retrieve
 run_config C3_card --estimator-path "$ESTIMATOR"
 run_config C4_cascade --estimator-path "$ESTIMATOR"
 
-# ---------- Phase 6: upload artifacts to HF Hub ----------
-phase "6/6 Upload artifacts to HuggingFace Hub"
+# ---------- Phase 7: upload artifacts to HF Hub ----------
+phase "7/7 Upload artifacts to HuggingFace Hub"
 $PY - <<PY
 import os, pathlib, glob, sys
 from huggingface_hub import HfApi, create_repo
