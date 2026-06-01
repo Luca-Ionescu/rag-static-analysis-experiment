@@ -79,6 +79,7 @@ def _build_record(
     latency_ms: float,
     analyzer: PredictionAnalyzer,
     s_hat_0: float | None = None,
+    s_hat_1: float | None = None,
     static_out_of_scope: list[str] | None = None,
     signature_issues: list | None = None,
     import_issues: list | None = None,
@@ -92,6 +93,12 @@ def _build_record(
         "retrieved": retrieved,
         "trigger_reason": trigger_reason,
         "s_hat_0": s_hat_0,
+        # ŝ₁ = predicted ES of the retrieved generation (None when no retrieval
+        # happened). Emitting it makes the CARD (C3) T_RAG/t_acc sweep fully
+        # replayable from JSONL alone — see scripts/08_selectivity_check.py and
+        # the post-hoc re-thresholding path. It does NOT change CARD's logic;
+        # the value is already computed by card_pipeline.
+        "s_hat_1": s_hat_1,
         "static_out_of_scope": static_out_of_scope or [],
         "signature_issues": signature_issues or [],
         "import_issues": import_issues or [],
@@ -152,6 +159,7 @@ def _run_single_instance(
             trigger_reason="card" if retrieved else "none",
             latency_ms=card_out.latency_ms, analyzer=analyzer,
             s_hat_0=card_out.s_hats[0] if card_out.s_hats else None,
+            s_hat_1=card_out.s_hats[1] if len(card_out.s_hats) > 1 else None,
         )
 
     if config == "C4_cascade":

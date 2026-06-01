@@ -254,6 +254,22 @@ run_config C4_cascade --estimator-path "$ESTIMATOR"
 
 # ---------- Phase 7: upload artifacts to HF Hub ----------
 phase "7/7 Upload artifacts to HuggingFace Hub"
+
+# Bundle the generation cache (pickled Generations keyed by SHA-256(prompt)) so
+# every post-hoc T_RAG / t_acc sweep and cascade-logic change can be replayed on
+# CPU with `04_run_experiment.py --backend mock --cache-dir <unpacked>` instead
+# of re-running this GPU pipeline. The cache holds the zero-shot AND retrieved
+# generation for every benchmarked instance (~5k small pkls, a few MB gzipped).
+CACHE_TARBALL="$RESULTS_DIR/generation_cache.tar.gz"
+if [[ -d data/generation_cache ]]; then
+    n_pkl=$(find data/generation_cache -name '*.pkl' | wc -l | tr -d ' ')
+    echo "[cache] bundling $n_pkl cached generations -> $CACHE_TARBALL"
+    tar -czf "$CACHE_TARBALL" -C data generation_cache
+    echo "[cache] $(du -h "$CACHE_TARBALL" | cut -f1) tarball ready"
+else
+    echo "[warn] data/generation_cache missing; post-hoc CPU replay will be impossible" >&2
+fi
+
 $PY - <<PY
 import os, pathlib, glob, sys
 from huggingface_hub import HfApi, create_repo
@@ -267,6 +283,7 @@ create_repo(repo_id, repo_type="dataset", private=True, exist_ok=True, token=tok
 paths = [
     "$ESTIMATOR",
     "$TRAIN_NPZ",
+    "$CACHE_TARBALL",
 ] + glob.glob("$RESULTS_DIR/*.jsonl") + glob.glob("$LOG_DIR/*.log")
 
 uploaded = 0
