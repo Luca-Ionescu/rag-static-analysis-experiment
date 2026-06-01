@@ -31,6 +31,11 @@ scikit-learn
 # Data
 datasets
 huggingface-hub
+# The runpod/pytorch image sets HF_HUB_ENABLE_HF_TRANSFER=1 (fast Rust-based
+# downloader) but does NOT ship the package, so snapshot_download hard-fails
+# without it. Install it for fast model pulls; the pipeline script also falls
+# back to the standard downloader if it is ever still missing.
+hf_transfer
 
 # Static analyzer parser (API is version-sensitive, pin tightly)
 tree-sitter==0.23.2

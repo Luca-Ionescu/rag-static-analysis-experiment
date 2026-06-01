@@ -147,6 +147,18 @@ fi
 
 mkdir -p data/training_data models "results/codellama_7b" data/generation_cache
 
+# The runpod/pytorch image exports HF_HUB_ENABLE_HF_TRANSFER=1 to use the fast
+# Rust downloader, but the `hf_transfer` package isn't always present (and the
+# HF client then hard-fails instead of falling back). requirements-runpod.txt
+# installs it; if it's still not importable, drop back to the standard
+# downloader so the model pull can't crash the run.
+if ! $PY -c "import hf_transfer" >/dev/null 2>&1; then
+    export HF_HUB_ENABLE_HF_TRANSFER=0
+    echo "[setup] hf_transfer unavailable -> HF_HUB_ENABLE_HF_TRANSFER=0 (standard download)"
+else
+    echo "[setup] hf_transfer present -> fast downloads enabled"
+fi
+
 # ---------- Phase 2: model download ----------
 phase "2/7 Model download (CodeLlama-7B)"
 $PY - <<PY
