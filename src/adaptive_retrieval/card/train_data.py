@@ -1,14 +1,27 @@
 """Build (features, ES-score) training pairs for the CARD Estimator.
 
-Adapted recipe (IMPLEMENTATION_GUIDE Appendix D.3). The CARD paper §3.4
-specifies 11k Python repos with 50–100 files each; ``the-stack-smol`` ships
-~10k random Python files without repo grouping, so we sample 25 (X, y)
-pairs per file instead of ~22 per repo, targeting the same ~250k pairs.
+CARD §3.4 calibrates the Estimator on (X, y) holes sampled from Python files
+in The Stack: it generates each y **without retrieval** and regresses the
+model's intrinsic token-confidence features against ES(y, ŷ). Because no
+cross-file context is used at calibration time (see ``construct_training_data``,
+which passes ``retrieved=None``), pairs are sampled per *file* — the paper's
+"repos with 50–100 files" framing is about corpus coverage, not about feeding
+sibling files into the calibration prompt. So per-file sampling is faithful;
+what matters is that files are drawn from real packages and that there are
+enough of them.
 
-The actual generation step (Generator.generate_batch on hundreds of
-thousands of prompts) is a multi-hour GPU job. The helper functions below
-are pure-Python and unit-testable on a laptop; ``construct_training_data``
-is the orchestrator that calls the Generator.
+Faithful recipe:
+  * Source: stream ``bigcode/the-stack-dedup`` (the corpus CARD used), Python
+    subset. ``scripts/01_construct_training_data.py`` filters while streaming.
+  * File filter (``is_valid_file``): ≥3 local (relative) imports AND >20
+    non-empty lines — files embedded in a real package, exact to the paper.
+  * Per file: sample up to ``PAIRS_PER_FILE`` holes; y length ~ Poisson(λ=2),
+    X = the 50 lines before the hole.
+  * Deduplicate near-identical pairs via K-means on TF-IDF(x+y).
+
+The generation step (``Generator.generate_batch`` over tens of thousands of
+prompts) is the multi-hour GPU job. Everything else is pure-Python and
+unit-testable on a laptop; ``construct_training_data`` is the orchestrator.
 """
 from __future__ import annotations
 
@@ -22,13 +35,16 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 
 POISSON_LAMBDA = 2
 LINES_X = 50
-# CARD §3.4 specifies ≥3 local imports — a filter designed for the full
-# Stack where files live inside multi-file repos. On the-stack-smol sample
-# (~10k flat Python files), the same threshold rejects ~97% of files
-# (mostly standalone scripts / notebooks), yielding ~1.6k pairs instead
-# of the targeted ~250k. Relaxed to ≥1 as a defensible deviation: files
-# with at least one relative import still belong to a package context.
-MIN_LOCAL_IMPORTS = 1
+# CARD §3.4: keep files with ≥3 local (relative) imports — the paper's proxy
+# for "this file lives inside a real multi-file package", which is the
+# distribution the Estimator must calibrate on. Exact to the paper.
+# NOTE: on the small the-stack-smol sample this rejects ~97% of files (mostly
+# standalone scripts), which is why calibration MUST stream the full
+# the-stack-dedup corpus (see scripts/01_construct_training_data.py), where
+# real package files with relative imports are plentiful. Relaxing this
+# threshold to recover volume from the-stack-smol trades data quality for
+# quantity and biases the Estimator — do not do it; fix the source instead.
+MIN_LOCAL_IMPORTS = 3
 MIN_NONEMPTY_LINES = 20
 TARGET_PAIRS = 250_000
 CLUSTER_RATIO = 0.2          # Repoformer Appendix D
@@ -94,11 +110,16 @@ def kmeans_deduplicate(
     max_features: int = 2000,
     batch_size: int = 4096,
     random_state: int = 42,
+    max_clusters: int = 50_000,
 ) -> list[Pair]:
     """K-means on TF-IDF(x+y), keep one representative per cluster.
 
     Cluster count = ``cluster_ratio * len(pairs)``, following Repoformer
-    Appendix D. With cluster_ratio=0.2 this targets ~5x deduplication.
+    Appendix D (cluster_ratio=0.2 targets ~5x deduplication), capped at
+    ``max_clusters``. The cap keeps MiniBatchKMeans tractable: cluster counts
+    in the hundreds of thousands are computationally infeasible and
+    unnecessary for a 13-feature Estimator (tens of thousands of deduplicated
+    pairs already saturate it).
     """
     if not pairs:
         return []
@@ -106,7 +127,7 @@ def kmeans_deduplicate(
     vec = TfidfVectorizer(max_features=max_features)
     matrix = vec.fit_transform(texts)
     n_clusters = max(1, int(len(pairs) * cluster_ratio))
-    n_clusters = min(n_clusters, matrix.shape[0])
+    n_clusters = min(n_clusters, matrix.shape[0], max_clusters)
     km = MiniBatchKMeans(
         n_clusters=n_clusters,
         random_state=random_state,

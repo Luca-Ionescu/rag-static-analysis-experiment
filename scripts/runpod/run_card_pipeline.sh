@@ -8,16 +8,26 @@
 #
 # Required env vars (set in the RunPod pod template, or before launching the
 # script):
-#   HF_TOKEN              HuggingFace access token (read + write).
+#   HF_TOKEN              HuggingFace access token (read + write). The account
+#                         behind it MUST have accepted the gated dataset license
+#                         at https://huggingface.co/datasets/bigcode/the-stack-dedup
+#                         (one-time click) — calibration streams that corpus.
 #   HF_DATASET_REPO       Private dataset repo, e.g. "luca-ionescu/card-7b-results".
 #                         Created if missing.
+#
+# PREREQUISITE: accept the the-stack-dedup license (link above) with the same HF
+# account as HF_TOKEN before launching, or Phase 3 aborts at the --min-files
+# guardrail (by design — better a fast abort than a strawman Estimator).
 #
 # Optional env vars (defaults are CARD-paper-identical):
 #   MODEL                 default: codellama/CodeLlama-7b-hf
 #   MODEL_FAMILY          default: codellama (FIM token set)
 #   MAX_TOKENS            default: 50
-#   NPAIRS                default: 250000 (target after dedup)
+#   NPAIRS                default: 250000 (upper cap on pairs after dedup)
 #   BATCH_SIZE            default: 256 (vLLM chunk size)
+#   FILE_LIMIT            default: 15000 (target valid files streamed from the Stack)
+#   MIN_FILES             default: 8000 (abort before GPU if fewer valid files stream out)
+#   MIN_PAIRS             default: 20000 (abort rather than write a tiny calibration set)
 #   DATASET               default: crosscodeeval_py
 #   TRAG                  default: 0.9 (CARD-RG1 threshold)
 #   WORK_DIR              default: /workspace/project-group-17
@@ -46,6 +56,9 @@ MODEL_FAMILY="${MODEL_FAMILY:-codellama}"
 MAX_TOKENS="${MAX_TOKENS:-50}"
 NPAIRS="${NPAIRS:-250000}"
 BATCH_SIZE="${BATCH_SIZE:-256}"
+FILE_LIMIT="${FILE_LIMIT:-15000}"
+MIN_FILES="${MIN_FILES:-8000}"
+MIN_PAIRS="${MIN_PAIRS:-20000}"
 DATASET="${DATASET:-crosscodeeval_py}"
 TRAG="${TRAG:-0.9}"
 WORK_DIR="${WORK_DIR:-/workspace/project-group-17}"
@@ -150,7 +163,8 @@ if [[ -f "$TRAIN_NPZ" ]]; then
 else
     phase "3/6 Calibration training data (~2-3h)"
     $PY scripts/01_construct_training_data.py \
-        --source the-stack-smol \
+        --source the-stack-dedup \
+        --file-limit "$FILE_LIMIT" \
         --backend vllm \
         --model "$MODEL" \
         --model-family "$MODEL_FAMILY" \
@@ -158,6 +172,8 @@ else
         --n-pairs "$NPAIRS" \
         --per-file 25 \
         --batch-size "$BATCH_SIZE" \
+        --min-files "$MIN_FILES" \
+        --min-pairs "$MIN_PAIRS" \
         --output "$TRAIN_NPZ" \
         2>&1 | tee "$LOG_DIR/calibration.log"
 fi

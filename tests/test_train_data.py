@@ -49,9 +49,23 @@ def test_is_valid_file_true_when_imports_and_lines_sufficient():
     assert is_valid_file(src)
 
 
+def test_is_valid_file_false_when_too_few_imports():
+    # MIN_LOCAL_IMPORTS=3 — fewer than 3 local imports => rejected, even with
+    # plenty of non-empty lines.
+    src = (
+        "from .a import x\n"
+        "from .b import y\n"
+        + "\n".join(f"x = {i}" for i in range(50))
+        + "\n"
+    )
+    assert count_local_imports(src) == 2
+    assert not is_valid_file(src)
+
+
 def test_is_valid_file_false_when_no_local_imports():
-    # MIN_LOCAL_IMPORTS=1 — zero imports => rejected.
+    # Zero local imports => rejected regardless of length.
     src = "\n".join(f"x = {i}" for i in range(50)) + "\n"
+    assert count_local_imports(src) == 0
     assert not is_valid_file(src)
 
 
