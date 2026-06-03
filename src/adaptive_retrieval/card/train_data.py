@@ -110,7 +110,7 @@ def kmeans_deduplicate(
     max_features: int = 2000,
     batch_size: int = 4096,
     random_state: int = 42,
-    max_clusters: int = 50_000,
+    max_clusters: int = 30_000,
 ) -> list[Pair]:
     """K-means on TF-IDF(x+y), keep one representative per cluster.
 
@@ -132,7 +132,13 @@ def kmeans_deduplicate(
         n_clusters=n_clusters,
         random_state=random_state,
         batch_size=batch_size,
-        n_init=3,
+        # n_init=1 + the 30k max_clusters default keep this tractable:
+        # MiniBatchKMeans cost is super-linear in n_clusters (k-means++ init
+        # alone re-runs per init), so the old (n_init=3, 50k-cluster) combo
+        # ran for HOURS on CPU with the GPU idle, before any generation. The
+        # 13-feature Estimator saturates well below 30k pairs (still >> the
+        # 20k --min-pairs floor), so this costs no calibration quality.
+        n_init=1,
     )
     labels = km.fit_predict(matrix)
     seen: set[int] = set()
