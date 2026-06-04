@@ -159,6 +159,57 @@ class VLLMGenerator(Generator):
             max_tokens=max_tokens,
             logprobs=top_k_for_entropy,
         )
+        # Cached for the over-length guard (_fit_prompt). vLLM aborts the entire
+        # EngineCore if a single prompt exceeds the context window, so we
+        # defensively truncate before every generate call.
+        self._max_tokens = max_tokens
+        self._tokenizer = self.llm.get_tokenizer()
+        self._max_model_len = self._detect_max_model_len()
+
+    def _detect_max_model_len(self, default: int = 16384) -> int:
+        """Best-effort read of the engine's context window, safe-defaulted.
+
+        The attribute path has moved across vLLM versions, so probe a couple of
+        known locations and fall back to the value the engine logs for
+        CodeLlama (16384) if neither resolves.
+        """
+        for getter in (
+            lambda: self.llm.llm_engine.model_config.max_model_len,
+            lambda: self.llm.llm_engine.vllm_config.model_config.max_model_len,
+        ):
+            try:
+                v = int(getter())
+                if v > 0:
+                    return v
+            except Exception:
+                pass
+        return default
+
+    def _fit_prompt(self, prompt: str) -> str:
+        """Guarantee ``prompt`` fits the context window so an over-long input
+        can never crash the engine (which kills the whole run).
+
+        Keeps the TAIL of the prompt: for a FIM prompt that preserves the
+        ``<SUF>``/``<MID>`` markers and the context nearest the hole, dropping
+        only the far-left prefix head. Over-long prompts are rare and
+        pathological (minified/data files in calibration; very large retrieved
+        contexts at inference), so truncating beats aborting the job. The
+        128-token margin absorbs BOS / round-trip tokenization differences.
+        Normal-length prompts are returned unchanged.
+        """
+        budget = self._max_model_len - self._max_tokens - 128
+        if budget <= 0:
+            return prompt
+        try:
+            ids = self._tokenizer.encode(prompt)
+            if len(ids) <= budget:
+                return prompt
+            return self._tokenizer.decode(ids[-budget:])
+        except Exception:
+            # Last-resort char cap (encode should never fail) — still can't
+            # blow the window.
+            cap = budget * 2
+            return prompt if len(prompt) <= cap else prompt[-cap:]
 
     @staticmethod
     def _parse(output) -> Generation:
@@ -191,10 +242,11 @@ class VLLMGenerator(Generator):
         )
 
     def generate(self, prompt: str) -> Generation:
-        outputs = self.llm.generate([prompt], self.sampling_params)
+        outputs = self.llm.generate([self._fit_prompt(prompt)], self.sampling_params)
         return self._parse(outputs[0])
 
     def generate_batch(self, prompts: list[str]) -> list[Generation]:
+        prompts = [self._fit_prompt(p) for p in prompts]
         outputs = self.llm.generate(prompts, self.sampling_params)
         return [self._parse(o) for o in outputs]
 
