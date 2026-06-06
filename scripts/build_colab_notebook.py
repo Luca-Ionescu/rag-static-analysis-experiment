@@ -268,9 +268,31 @@ CELLS.append(code(
     "print('results branch ready:', GH_RESULTS_BRANCH)"
 ))
 
+# --- Clear stale generation cache ---
+CELLS.append(md(
+    "## 9. Clear the generation cache\n"
+    "The cache key is `sha256(model :: prompt :: max_tokens)` — it does **not** "
+    "include sampling params. Adding stop tokens / changing the run would "
+    "otherwise serve the **old degenerate generations**. Clear it so this run "
+    "regenerates from scratch. (A fresh runtime already has no cache; this is a "
+    "belt-and-suspenders step.)"
+))
+CELLS.append(code(
+    "import shutil, os\n"
+    "os.chdir(WORK_DIR)\n"
+    "cache = 'data/generation_cache'\n"
+    "if os.path.isdir(cache):\n"
+    "    n = sum(len(files) for _, _, files in os.walk(cache))\n"
+    "    shutil.rmtree(cache)\n"
+    "    print(f'cleared {n} cached generations')\n"
+    "else:\n"
+    "    print('no cache to clear (fresh runtime)')\n"
+    "os.makedirs(cache, exist_ok=True)"
+))
+
 # --- Run + push per config ---
 CELLS.append(md(
-    "## 9. Run C1–C4 (push each as it finishes)\n"
+    "## 10. Run C1–C4 (push each as it finishes)\n"
     "Each config writes its JSONL via `04_run_experiment.py`, then is uploaded "
     "immediately — so a disconnect never loses a completed config."
 ))
@@ -303,7 +325,7 @@ CELLS.append(code(
 ))
 
 # --- Summary + push ---
-CELLS.append(md("## 10. Summary (computed + pushed)"))
+CELLS.append(md("## 11. Summary (computed + pushed)"))
 CELLS.append(code(
     "import os, json, sys\n"
     "os.chdir(WORK_DIR)\n"

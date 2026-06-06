@@ -19,6 +19,18 @@ from pathlib import Path
 
 import numpy as np
 
+# Sentinel strings that mark the end of a fill-in-the-middle completion across
+# the model families we use (Qwen2.5-Coder, CodeLlama, StarCoder). Passed as
+# vLLM ``stop`` strings so generation halts at the natural boundary instead of
+# running to ``max_tokens`` and degenerating into <|fim_pad|> repetition.
+_FIM_STOP_STRINGS = (
+    "<|fim_pad|>", "<|endoftext|>", "<|file_sep|>",
+    "<|fim_prefix|>", "<|fim_suffix|>", "<|fim_middle|>",
+    "<|repo_name|>",
+    "<EOT>", "▁<EOT>", "</s>",          # CodeLlama
+    "<fim_pad>", "<|endofcode|>",        # StarCoder family
+)
+
 
 @dataclass
 class Generation:
@@ -154,10 +166,20 @@ class VLLMGenerator(Generator):
             dtype=dtype,
             max_logprobs=top_k_for_entropy,
         )
+        # Stop the moment the model emits a FIM/EOS sentinel. Without this,
+        # small code LMs in FIM mode keep generating to max_tokens and collapse
+        # into <|fim_pad|> repetition once the body is done, which (a) pollutes
+        # the prediction text and (b) — critically — pollutes CARD's per-token
+        # prob/entropy features, since they are computed over the generated
+        # tokens. Stopping at generation time keeps both the text and the
+        # logprob arrays clean. include_stop_str_in_output=False drops the
+        # sentinel itself from the returned text.
         self.sampling_params = SamplingParams(
             temperature=0.0,
             max_tokens=max_tokens,
             logprobs=top_k_for_entropy,
+            stop=list(_FIM_STOP_STRINGS),
+            include_stop_str_in_output=False,
         )
         # Cached for the over-length guard (_fit_prompt). vLLM aborts the entire
         # EngineCore if a single prompt exceeds the context window, so we
