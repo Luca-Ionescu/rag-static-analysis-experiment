@@ -172,7 +172,7 @@ if not os.path.exists(ESTIMATOR):
     subprocess.run([sys.executable, 'scripts/02_train_estimator.py',
         '--data', npz, '--output', ESTIMATOR, *train], check=True)
     if not SMOKE:
-        gh_upload(ESTIMATOR); gh_upload(npz)
+        gh_upload(ESTIMATOR, 'models'); gh_upload(npz, 'data/training_data')
 print('estimator ready:', ESTIMATOR, os.path.exists(ESTIMATOR), '|', 'SMOKE' if SMOKE else 'FULL')
 """
 
