@@ -29,7 +29,7 @@ from ..metrics import (
     hallucination_flag,
     identifier_f1,
     repository_symbol_precision,
-    truncate_to_gt_lines,
+    truncate_to_function_body,
 )
 from ..retriever import BM25Retriever
 from ..static_analysis.analyzer import PredictionAnalyzer
@@ -143,10 +143,10 @@ def _build_record(
     }
     if multiline:
         # Multi-line task (RepoEval-function): the model over-generates past the
-        # body, so the headline metrics are scored on the prediction truncated
-        # to the ground truth's line budget (RepoCoder protocol). The raw,
+        # function body, so the headline metrics are scored on the prediction
+        # truncated to the end of the generated body (dedent boundary). The raw,
         # untruncated metrics are kept alongside for comparison.
-        pred_trunc = truncate_to_gt_lines(inst.ground_truth, prediction)
+        pred_trunc = truncate_to_function_body(inst.ground_truth, prediction)
         record["prediction_truncated"] = pred_trunc
         record["metrics"] = _score(inst, pred_trunc, analyzer)        # main
         record["metrics_raw"] = _score(inst, prediction, analyzer)    # secondary

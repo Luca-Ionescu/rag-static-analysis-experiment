@@ -18,30 +18,55 @@ from .static_analysis.analyzer import PredictionAnalyzer
 
 # ---------- prediction post-processing ----------
 
-def truncate_to_gt_lines(reference: str, prediction: str) -> str:
-    """Truncate a multi-line prediction to the ground truth's line budget.
+def _indentation(line: str) -> int:
+    """Leading-whitespace width of ``line`` (tabs expanded to 8)."""
+    expanded = line.expandtabs(8)
+    return len(expanded) - len(expanded.lstrip())
 
-    RepoCoder's function-completion scoring protocol (``compute_score.py``):
-    a code LM in FIM mode keeps generating past the function body (into the
-    next def, or into <|fim_pad|> filler), so the raw generation is scored
-    against only its first ``N`` non-blank lines, where ``N`` is the number of
-    non-blank lines in the ground truth. Language-agnostic — no brackets or
-    indentation needed.
 
-    We keep the prediction's *original* (non-stripped) first ``N`` non-blank
-    lines so the returned text is still real code (RepoCoder strips every line
-    for scoring; we leave stripping to the metric functions to stay consistent
-    with how ``edit_similarity`` etc. treat CCE predictions).
+def truncate_to_function_body(reference: str, prediction: str) -> str:
+    """Truncate a multi-line prediction to the end of the generated function body.
+
+    A code LM completing a function body keeps generating past the body — into
+    the next top-level ``def``/``class``, or into FIM padding. We keep the
+    prediction up to (but not including) the first line that *dedents out of the
+    body*: any non-blank line whose indentation is shallower than the body's
+    own indentation marks the end of the function and is dropped along with
+    everything after it.
+
+    The body indentation is taken from the first non-blank line of the
+    ground-truth completion (the holes are function bodies, so the gold's first
+    line sits at the body's indent level). This is the Python-faithful analogue
+    of CARD §3.3's "extract the function body by matching brackets" — Python
+    delimits blocks by indentation, not braces, so we use the dedent boundary.
+
+    Unlike a line-count budget, this scores the model's *actual complete
+    completion* (the whole body it wrote, ``return`` included) rather than an
+    arbitrary first-N-lines slice, so a guard clause or extra statement never
+    pushes the real body content out of the scored window.
     """
-    n = sum(1 for ln in reference.splitlines() if ln.strip())
-    if n == 0:
+    if not prediction.strip():
+        return ""
+    ref_nb = [ln for ln in reference.splitlines() if ln.strip()]
+    if not ref_nb:
         return prediction
+    body_indent = _indentation(ref_nb[0])
+
     out: list[str] = []
-    for ln in prediction.splitlines():
-        if ln.strip():
-            out.append(ln)
-            if len(out) >= n:
+    seen_body = False
+    for line in prediction.splitlines():
+        if line.strip():
+            # A non-blank line shallower than the body indent ends the function.
+            if seen_body and _indentation(line) < body_indent:
                 break
+            seen_body = True
+            out.append(line)
+        else:
+            # Keep blank lines only while inside the body (they may be trailing
+            # padding once the body ends, but we strip trailing blanks below).
+            out.append(line)
+    while out and not out[-1].strip():
+        out.pop()
     return "\n".join(out)
 
 
