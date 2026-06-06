@@ -29,12 +29,13 @@ from ..metrics import (
     hallucination_flag,
     identifier_f1,
     repository_symbol_precision,
+    truncate_to_gt_lines,
 )
 from ..retriever import BM25Retriever
 from ..static_analysis.analyzer import PredictionAnalyzer
 from ..static_analysis.scope import InFileScopeAnalyzer
 from ..static_analysis.symbol_table import RepositorySymbolTable
-from .datasets import Instance, build_repo_chunks_index
+from .datasets import MULTILINE_DATASETS, Instance, build_repo_chunks_index
 
 
 def _serialise(items) -> list[dict]:
@@ -67,9 +68,44 @@ class RunSummary:
     percent_retrieval: float
     mean_latency_ms: float
     metrics: dict[str, float]
+    # Aggregates over the raw (untruncated) per-instance metrics. Only populated
+    # for multi-line datasets where ``metrics`` is the truncated (main) view;
+    # None for single-line datasets where there is only one metric set.
+    metrics_raw: dict[str, float] | None = None
+
+
+def _mean_metrics(records: list[dict], key: str) -> dict[str, float]:
+    """Average a per-instance metric block (``metrics`` or ``metrics_raw``)."""
+    n = len(records)
+    present = [r for r in records if key in r]
+    if not present:
+        return {}
+    m = len(present)
+    return {
+        "exact_match": sum(float(r[key]["exact_match"]) for r in present) / m,
+        "edit_similarity": sum(float(r[key]["edit_similarity"]) for r in present) / m,
+        "identifier_f1": sum(float(r[key]["identifier_f1"]) for r in present) / m,
+        "repo_symbol_precision": sum(float(r[key]["repo_symbol_precision"]) for r in present) / m,
+        "hallucination_rate": sum(float(r[key]["hallucinated"]) for r in present) / m,
+    }
 
 
 # ---------- per-instance dispatch ----------
+
+def _score(inst: Instance, prediction: str, analyzer: PredictionAnalyzer) -> dict:
+    """Compute the metric dict for one prediction string."""
+    return {
+        "exact_match": exact_match(inst.ground_truth, prediction),
+        "edit_similarity": edit_similarity(inst.ground_truth, prediction),
+        "identifier_f1": identifier_f1(inst.ground_truth, prediction),
+        "repo_symbol_precision": repository_symbol_precision(
+            prediction, inst.x_left, inst.x_right, analyzer
+        ),
+        "hallucinated": hallucination_flag(
+            prediction, inst.x_left, inst.x_right, analyzer
+        ),
+    }
+
 
 def _build_record(
     inst: Instance,
@@ -83,8 +119,9 @@ def _build_record(
     static_out_of_scope: list[str] | None = None,
     signature_issues: list | None = None,
     import_issues: list | None = None,
+    multiline: bool = False,
 ) -> dict:
-    return {
+    record = {
         "instance_id": inst.instance_id,
         "repository": inst.repository,
         "target_file": inst.target_file,
@@ -102,19 +139,20 @@ def _build_record(
         "static_out_of_scope": static_out_of_scope or [],
         "signature_issues": signature_issues or [],
         "import_issues": import_issues or [],
-        "metrics": {
-            "exact_match": exact_match(inst.ground_truth, prediction),
-            "edit_similarity": edit_similarity(inst.ground_truth, prediction),
-            "identifier_f1": identifier_f1(inst.ground_truth, prediction),
-            "repo_symbol_precision": repository_symbol_precision(
-                prediction, inst.x_left, inst.x_right, analyzer
-            ),
-            "hallucinated": hallucination_flag(
-                prediction, inst.x_left, inst.x_right, analyzer
-            ),
-        },
         "latency_ms": latency_ms,
     }
+    if multiline:
+        # Multi-line task (RepoEval-function): the model over-generates past the
+        # body, so the headline metrics are scored on the prediction truncated
+        # to the ground truth's line budget (RepoCoder protocol). The raw,
+        # untruncated metrics are kept alongside for comparison.
+        pred_trunc = truncate_to_gt_lines(inst.ground_truth, prediction)
+        record["prediction_truncated"] = pred_trunc
+        record["metrics"] = _score(inst, pred_trunc, analyzer)        # main
+        record["metrics_raw"] = _score(inst, prediction, analyzer)    # secondary
+    else:
+        record["metrics"] = _score(inst, prediction, analyzer)
+    return record
 
 
 def _run_single_instance(
@@ -127,10 +165,15 @@ def _run_single_instance(
     model_family: str,
     t_rag: float,
     top_k: int,
+    multiline: bool = False,
 ) -> dict:
+    # Bind the multi-line flag so every _rec(...) below emits both the
+    # truncated (main) and raw metric sets for function-level datasets.
+    from functools import partial
+    _rec = partial(_build_record, multiline=multiline)
     if config == "C1_no_retrieve":
         out = no_retrieve_baseline(generator, inst.x_left, inst.x_right, model_family)
-        return _build_record(
+        return _rec(
             inst, out.prediction, retrieved=False, trigger_reason="none",
             latency_ms=out.latency_ms, analyzer=analyzer,
         )
@@ -139,7 +182,7 @@ def _run_single_instance(
         out = always_retrieve_baseline(
             generator, retriever, inst.x_left, inst.x_right, model_family, top_k=top_k
         )
-        return _build_record(
+        return _rec(
             inst, out.prediction, retrieved=True, trigger_reason="always",
             latency_ms=out.latency_ms, analyzer=analyzer,
         )
@@ -154,7 +197,7 @@ def _run_single_instance(
             model_family=model_family, top_k=top_k,
         )
         retrieved = bool(card_out.retrieved_at_iter)
-        return _build_record(
+        return _rec(
             inst, card_out.prediction, retrieved=retrieved,
             trigger_reason="card" if retrieved else "none",
             latency_ms=card_out.latency_ms, analyzer=analyzer,
@@ -170,7 +213,7 @@ def _run_single_instance(
             x_left=inst.x_left, x_right=inst.x_right,
             t_rag=t_rag, model_family=model_family, top_k=top_k,
         )
-        return _build_record(
+        return _rec(
             inst, casc.prediction, retrieved=casc.retrieved,
             trigger_reason=casc.trigger_reason, latency_ms=casc.latency_ms,
             analyzer=analyzer, s_hat_0=casc.s_hat_0,
@@ -187,7 +230,7 @@ def _run_single_instance(
             out_rag = always_retrieve_baseline(
                 generator, retriever, inst.x_left, inst.x_right, model_family, top_k=top_k
             )
-            return _build_record(
+            return _rec(
                 inst, out_rag.prediction, retrieved=True, trigger_reason="static",
                 latency_ms=out_zs.latency_ms + out_rag.latency_ms,
                 analyzer=analyzer,
@@ -195,7 +238,7 @@ def _run_single_instance(
                 signature_issues=_serialise(sa.signature_issues),
                 import_issues=_serialise(sa.import_issues),
             )
-        return _build_record(
+        return _rec(
             inst, out_zs.prediction, retrieved=False, trigger_reason="none",
             latency_ms=out_zs.latency_ms, analyzer=analyzer,
             static_out_of_scope=list(sa.significant_out_of_scope),
@@ -212,7 +255,7 @@ def _run_single_instance(
         es_yes = edit_similarity(inst.ground_truth, out_yes.prediction)
         chose_rag = es_yes > es_no
         chosen = out_yes if chose_rag else out_no
-        return _build_record(
+        return _rec(
             inst, chosen.prediction, retrieved=chose_rag, trigger_reason="oracle",
             latency_ms=out_no.latency_ms + out_yes.latency_ms,
             analyzer=analyzer,
@@ -264,9 +307,12 @@ def run_experiment(
         except ImportError:
             pass
 
-    n = 0
+    # Multi-line datasets (function-body completion) get truncated (main) +
+    # raw metric sets per record; single-line datasets get one set.
+    multiline = dataset_name in MULTILINE_DATASETS
+
+    records: list[dict] = []
     n_retrieved = 0
-    sum_em = sum_es = sum_f1 = sum_rsp = sum_hall = 0.0
     sum_latency = 0.0
 
     with jsonlines.open(output_path, "w") as writer:
@@ -285,23 +331,17 @@ def run_experiment(
             )
             record = _run_single_instance(
                 config, inst, generator, retriever, analyzer, estimator,
-                model_family, t_rag, top_k,
+                model_family, t_rag, top_k, multiline=multiline,
             )
             record["dataset"] = dataset_name
             record["config"] = config
             writer.write(record)
-
-            n += 1
+            records.append(record)
             if record["retrieved"]:
                 n_retrieved += 1
-            m = record["metrics"]
-            sum_em += float(m["exact_match"])
-            sum_es += float(m["edit_similarity"])
-            sum_f1 += float(m["identifier_f1"])
-            sum_rsp += float(m["repo_symbol_precision"])
-            sum_hall += float(m["hallucinated"])
             sum_latency += float(record["latency_ms"])
 
+    n = len(records)
     return RunSummary(
         config=config,
         dataset=dataset_name,
@@ -309,13 +349,8 @@ def run_experiment(
         n_retrieved=n_retrieved,
         percent_retrieval=100.0 * n_retrieved / n if n else 0.0,
         mean_latency_ms=sum_latency / n if n else 0.0,
-        metrics={
-            "exact_match": sum_em / n if n else 0.0,
-            "edit_similarity": sum_es / n if n else 0.0,
-            "identifier_f1": sum_f1 / n if n else 0.0,
-            "repo_symbol_precision": sum_rsp / n if n else 0.0,
-            "hallucination_rate": sum_hall / n if n else 0.0,
-        },
+        metrics=_mean_metrics(records, "metrics"),
+        metrics_raw=_mean_metrics(records, "metrics_raw") or None,
     )
 
 
@@ -343,15 +378,6 @@ def aggregate_from_jsonl(path: str | Path) -> RunSummary:
         n_retrieved=n_retrieved,
         percent_retrieval=100.0 * n_retrieved / n,
         mean_latency_ms=sum(r.get("latency_ms", 0.0) for r in records) / n,
-        metrics={
-            "exact_match": sum(float(r["metrics"]["exact_match"]) for r in records) / n,
-            "edit_similarity": sum(float(r["metrics"]["edit_similarity"]) for r in records) / n,
-            "identifier_f1": sum(float(r["metrics"]["identifier_f1"]) for r in records) / n,
-            "repo_symbol_precision": sum(
-                float(r["metrics"]["repo_symbol_precision"]) for r in records
-            ) / n,
-            "hallucination_rate": sum(
-                float(r["metrics"]["hallucinated"]) for r in records
-            ) / n,
-        },
+        metrics=_mean_metrics(records, "metrics"),
+        metrics_raw=_mean_metrics(records, "metrics_raw") or None,
     )

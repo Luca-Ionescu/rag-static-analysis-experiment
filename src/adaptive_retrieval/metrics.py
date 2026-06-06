@@ -16,6 +16,35 @@ from scipy.stats import binomtest
 from .static_analysis.analyzer import PredictionAnalyzer
 
 
+# ---------- prediction post-processing ----------
+
+def truncate_to_gt_lines(reference: str, prediction: str) -> str:
+    """Truncate a multi-line prediction to the ground truth's line budget.
+
+    RepoCoder's function-completion scoring protocol (``compute_score.py``):
+    a code LM in FIM mode keeps generating past the function body (into the
+    next def, or into <|fim_pad|> filler), so the raw generation is scored
+    against only its first ``N`` non-blank lines, where ``N`` is the number of
+    non-blank lines in the ground truth. Language-agnostic — no brackets or
+    indentation needed.
+
+    We keep the prediction's *original* (non-stripped) first ``N`` non-blank
+    lines so the returned text is still real code (RepoCoder strips every line
+    for scoring; we leave stripping to the metric functions to stay consistent
+    with how ``edit_similarity`` etc. treat CCE predictions).
+    """
+    n = sum(1 for ln in reference.splitlines() if ln.strip())
+    if n == 0:
+        return prediction
+    out: list[str] = []
+    for ln in prediction.splitlines():
+        if ln.strip():
+            out.append(ln)
+            if len(out) >= n:
+                break
+    return "\n".join(out)
+
+
 # ---------- accuracy ----------
 
 def exact_match(reference: str, prediction: str) -> bool:
