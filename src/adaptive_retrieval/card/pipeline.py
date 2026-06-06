@@ -6,9 +6,10 @@ question. Per Zhang et al. 2024 §§2.2–2.4 and Table 3 of the paper.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
-from ..generator import Generator
+from ..generator import Generator, LatencyProxy
 from ..prompt import build_fim_prompt
 from ..retriever import BM25Retriever, make_query
 from .estimator import Estimator
@@ -70,12 +71,12 @@ def card_pipeline(
     s_hats: list[float] = []
     predictions: list[str] = []
     retrieved_at: list[int] = []
-    total_latency = 0.0
+    t0 = time.perf_counter()
+    gen = LatencyProxy(generator)
 
     # Iteration 0: zero-shot
     prompt = build_fim_prompt(x_left, x_right, retrieved=None, model_family=model_family)
-    g0 = generator.generate(prompt)
-    total_latency += g0.latency_ms
+    g0 = gen.generate(prompt)
     feats0 = extract_features(g0.token_probs, g0.token_entropies)
     s_hat_0 = float(estimator.predict(feats0)[0])
     s_hats.append(s_hat_0)
@@ -87,8 +88,7 @@ def card_pipeline(
         prompt_rag = build_fim_prompt(
             x_left, x_right, retrieved=retrieved, model_family=model_family
         )
-        g1 = generator.generate(prompt_rag)
-        total_latency += g1.latency_ms
+        g1 = gen.generate(prompt_rag)
         feats1 = extract_features(g1.token_probs, g1.token_entropies)
         s_hat_1 = float(estimator.predict(feats1)[0])
         s_hats.append(s_hat_1)
@@ -110,5 +110,7 @@ def card_pipeline(
         n_iterations=n_iterations,
         s_hats=s_hats,
         retrieved_at_iter=retrieved_at,
-        latency_ms=total_latency,
+        # Full-pipeline latency: generation (cache-robust) + estimator gate,
+        # select, and retrieval as live wall-clock.
+        latency_ms=gen.reported_ms + (time.perf_counter() - t0 - gen.gen_wall_s) * 1000.0,
     )

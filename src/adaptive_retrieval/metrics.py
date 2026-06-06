@@ -109,6 +109,31 @@ def identifier_f1(reference: str, prediction: str) -> float:
     return 2 * precision * recall / (precision + recall)
 
 
+# ---------- reference-based hallucination (A4 / A4∧B2) ----------
+
+def hallucinated_identifier_flag(reference: str, prediction: str) -> bool:
+    """A4: True iff the prediction emits ≥1 identifier absent from the reference.
+
+    Reference-based and resolver-free (independent of any static checker). It's
+    an upper bound on hallucination — a valid alternative identifier also counts.
+    Repurposes CrossCodeEval's Identifier-Match precision component.
+    """
+    return bool(set(_identifiers(prediction)) - set(_identifiers(reference)))
+
+
+def invented_identifier_flag(reference: str, prediction: str, undefined_names) -> bool:
+    """A4 ∧ B2: True iff the prediction emits an identifier that is BOTH absent
+    from the reference (A4) AND flagged ``undefined`` by a static checker
+    (B2 — e.g. pyflakes F821). The cleanest "the model invented a name" signal:
+    the reference never uses it *and* it resolves nowhere.
+
+    ``undefined_names`` is the checker's undefined-name set restricted to the
+    prediction span — passed in so this module stays free of any resolver
+    dependency (feed pyflakes / Pyright output here).
+    """
+    return bool(set(undefined_names) - set(_identifiers(reference)))
+
+
 # ---------- hallucination ----------
 
 def repository_symbol_precision(

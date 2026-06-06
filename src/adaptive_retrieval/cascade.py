@@ -28,11 +28,12 @@ A1 ablation matrix is measurable from a single set of cached generations.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import asdict, dataclass, field, is_dataclass
 
 from .card.estimator import Estimator
 from .card.features import extract_features
-from .generator import Generator
+from .generator import Generator, LatencyProxy
 from .prompt import build_fim_prompt
 from .retriever import BM25Retriever, make_query
 from .static_analysis.analyzer import PredictionAnalyzer
@@ -82,23 +83,32 @@ def cascade_pipeline(
             into, used by Tier 3 to resolve relative imports. Pass ``""``
             if not meaningful.
     """
+    t0 = time.perf_counter()
+    gen = LatencyProxy(generator)
+
+    def _lat() -> float:
+        # Full-pipeline latency: generation cost (cache-robust, summed from each
+        # Generation.latency_ms) + all non-generation work (features, estimator
+        # gate, static-analysis gate, retrieval) as live wall-clock.
+        return gen.reported_ms + (time.perf_counter() - t0 - gen.gen_wall_s) * 1000.0
+
     # Stage 1: zero-shot generation
     prompt_zs = build_fim_prompt(x_left, x_right, retrieved=None, model_family=model_family)
-    g0 = generator.generate(prompt_zs)
+    g0 = gen.generate(prompt_zs)
     feats0 = extract_features(g0.token_probs, g0.token_entropies)
     s_hat_0 = float(estimator.predict(feats0)[0])
 
     # Stage 2: CARD's is_retrieve gate
     if s_hat_0 < t_rag:
         g_rag = _retrieve_and_regenerate(
-            generator, retriever, x_left, x_right, model_family, top_k
+            gen, retriever, x_left, x_right, model_family, top_k
         )
         return CascadeOutput(
             prediction=g_rag.prediction,
             retrieved=True,
             trigger_reason="card",
             s_hat_0=s_hat_0,
-            latency_ms=g0.latency_ms + g_rag.latency_ms,
+            latency_ms=_lat(),
         )
 
     # Stage 3: three-tier static analysis on ŷ₀
@@ -120,7 +130,7 @@ def cascade_pipeline(
             # should match. Fall back to a generic tag.
             reason = "static"
         g_rag = _retrieve_and_regenerate(
-            generator, retriever, x_left, x_right, model_family, top_k
+            gen, retriever, x_left, x_right, model_family, top_k
         )
         return CascadeOutput(
             prediction=g_rag.prediction,
@@ -130,7 +140,7 @@ def cascade_pipeline(
             static_out_of_scope=list(sa.significant_out_of_scope),
             signature_issues=_serialise(sa.signature_issues),
             import_issues=_serialise(sa.import_issues),
-            latency_ms=g0.latency_ms + g_rag.latency_ms,
+            latency_ms=_lat(),
         )
 
     # No retrieval — return zero-shot. Carry diagnostics forward even when
@@ -143,7 +153,7 @@ def cascade_pipeline(
         static_out_of_scope=list(sa.significant_out_of_scope),
         signature_issues=_serialise(sa.signature_issues),
         import_issues=_serialise(sa.import_issues),
-        latency_ms=g0.latency_ms,
+        latency_ms=_lat(),
     )
 
 

@@ -264,13 +264,49 @@ class VLLMGenerator(Generator):
         )
 
     def generate(self, prompt: str) -> Generation:
+        t0 = time.perf_counter()
         outputs = self.llm.generate([self._fit_prompt(prompt)], self.sampling_params)
-        return self._parse(outputs[0])
+        gen = self._parse(outputs[0])
+        # vLLM's V1 engine often returns output.metrics=None (_parse then sets
+        # 0), so fall back to the call wall-clock — the single-sequence latency
+        # the per-instance pipeline timing relies on.
+        if not gen.latency_ms:
+            gen.latency_ms = (time.perf_counter() - t0) * 1000.0
+        return gen
 
     def generate_batch(self, prompts: list[str]) -> list[Generation]:
         prompts = [self._fit_prompt(p) for p in prompts]
         outputs = self.llm.generate(prompts, self.sampling_params)
         return [self._parse(o) for o in outputs]
+
+
+# ---------- latency proxy ----------
+
+class LatencyProxy:
+    """Wrap a Generator to reconstruct *cache-robust* generation latency.
+
+    It sums each ``Generation.latency_ms`` (a CachedGenerator hit carries the
+    value from when the text was first produced, so generation cost is counted
+    even when no GPU work happens this run) and, separately, the live wall-clock
+    spent inside ``generate()``. A pipeline then computes true end-to-end
+    latency as ``reported_ms + (total_wall_s - gen_wall_s) * 1000`` = generation
+    time + everything else (retrieval, estimator, static gate, ...).
+    """
+
+    def __init__(self, inner: "Generator"):
+        self.inner = inner
+        self.reported_ms = 0.0   # Σ Generation.latency_ms (survives caching)
+        self.gen_wall_s = 0.0    # live wall-clock spent in generate()
+
+    def generate(self, prompt: str) -> Generation:
+        a = time.perf_counter()
+        g = self.inner.generate(prompt)
+        self.gen_wall_s += time.perf_counter() - a
+        self.reported_ms += g.latency_ms
+        return g
+
+    def generate_batch(self, prompts: list[str]) -> list[Generation]:
+        return [self.generate(p) for p in prompts]
 
 
 # ---------- Mock for tests ----------
