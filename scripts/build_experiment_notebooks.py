@@ -147,21 +147,33 @@ with zipfile.ZipFile(f'{RC}/repositories/function_level.zip') as z: z.extractall
 print('RepoEval function task:', glob.glob('data/repoeval/datasets/function_level_completion_2k*.jsonl'))
 """
 
-CALIBRATE_CELL = """# ---- 0.5B ONLY: calibrate a fresh estimator on the-stack-dedup, reuse for both datasets ----
+CALIBRATE_CELL = """# ---- 0.5B ONLY: calibrate a fresh estimator, reuse the one .lgb for both datasets ----
+# FULL : the-stack-dedup (gated -> needs HF_TOKEN), real guards, ~30 min.
+# SMOKE: tiny public the-stack-smol sample, relaxed guards, isolated *_smoke paths
+#        (a few min, rough estimator -- wiring check only; not pushed).
 import os, subprocess, sys
 os.chdir(WORK_DIR)
-npz = 'data/training_data/qwen25_0.5b.npz'
+if SMOKE:
+    ESTIMATOR = 'models/estimator_qwen25_0.5b_smoke.lgb'   # don't clobber a real estimator
+    npz = 'data/training_data/qwen25_0.5b_smoke.npz'
+    build = ['--source','the-stack-smol','--file-limit','300','--n-pairs','3000',
+             '--per-file','25','--batch-size','256','--min-files','40','--min-pairs','400']
+    train = ['--num-boost-round','60','--min-skill','-1.0']
+else:
+    npz = 'data/training_data/qwen25_0.5b.npz'
+    build = ['--source','the-stack-dedup','--file-limit','15000','--n-pairs','250000',
+             '--per-file','25','--batch-size','256','--min-files','8000','--min-pairs','20000']
+    train = ['--num-boost-round','100']
 if not os.path.exists(ESTIMATOR):
     if not os.path.exists(npz):
         subprocess.run([sys.executable, 'scripts/01_construct_training_data.py',
-            '--source','the-stack-dedup','--file-limit','15000','--backend','vllm',
-            '--model', MODEL, '--model-family', MODEL_FAMILY, '--max-tokens','50',
-            '--n-pairs','250000','--per-file','25','--batch-size','256',
-            '--min-files','8000','--min-pairs','20000','--output', npz], check=True)
+            '--backend','vllm','--model', MODEL, '--model-family', MODEL_FAMILY,
+            '--max-tokens','50','--output', npz, *build], check=True)
     subprocess.run([sys.executable, 'scripts/02_train_estimator.py',
-        '--data', npz, '--output', ESTIMATOR, '--num-boost-round','100'], check=True)
-    gh_upload(ESTIMATOR); gh_upload(npz)
-print('estimator ready:', ESTIMATOR, os.path.exists(ESTIMATOR))
+        '--data', npz, '--output', ESTIMATOR, *train], check=True)
+    if not SMOKE:
+        gh_upload(ESTIMATOR); gh_upload(npz)
+print('estimator ready:', ESTIMATOR, os.path.exists(ESTIMATOR), '|', 'SMOKE' if SMOKE else 'FULL')
 """
 
 VERIFY = """import sys, os
@@ -292,7 +304,11 @@ def build(gen):
         code(GH_BRANCH),
     ]
     if gen["calibrate"]:
-        cells += [md("## 8b. Calibrate the 0.5B estimator (the-stack-dedup; ~30 min)"), code(CALIBRATE_CELL)]
+        cells += [md("## 8b. Calibrate the 0.5B estimator\n"
+                     "FULL: the-stack-dedup (gated → needs `HF_TOKEN`), ~30 min. "
+                     "SMOKE: tiny public `the-stack-smol` sample, relaxed guards, a few min "
+                     "(rough estimator → isolated `_smoke` paths, not pushed)."),
+                  code(CALIBRATE_CELL)]
     cells += [
         md("## 9. Verify dataset loaders"),
         code(VERIFY),

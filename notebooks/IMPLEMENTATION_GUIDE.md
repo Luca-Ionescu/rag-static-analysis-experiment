@@ -83,7 +83,9 @@ python scripts/01_construct_training_data.py --source the-stack-dedup --file-lim
 python scripts/02_train_estimator.py --data data/training_data/qwen25_0.5b.npz \
   --output models/estimator_qwen25_0.5b.lgb --num-boost-round 100
 ```
-Gotchas: the-stack-dedup is **gated** (accept the license on the PAT/HF account); calibration uses the **dedup-speed fix** already in `train_data.py` (`n_init=1`, `max_clusters=30_000`) so it finishes in ~30 min not hours; the `--min-pairs`/held-out-MSE guardrails must pass or it aborts by design. Push the `.lgb` to the results branch.
+Gotchas: the-stack-dedup is **gated** (accept the license on the PAT/HF account); calibration uses the **dedup-speed fix** already in `train_data.py` (`n_init=1`, `max_clusters=30_000`) so it finishes in ~30 min not hours; the `--min-pairs`/held-out-MSE (`--min-skill`) guardrails must pass or it aborts by design. Push the `.lgb` to the results branch.
+
+**SMOKE-aware calibration:** the calibration cell branches on `SMOKE`. `SMOKE=True` uses the tiny **public** `the-stack-smol` sample with relaxed guards (`--min-files 40 --min-pairs 400 --min-skill -1.0`, ~few min, no `HF_TOKEN` needed) and writes to **isolated `_smoke` paths** (`estimator_qwen25_0.5b_smoke.lgb`, reassigning the `ESTIMATOR` global so downstream C3 uses it) — a rough estimator for wiring only, **not pushed**. `SMOKE=False` does the real gated calibration to the canonical paths and pushes. So a smoke pass never clobbers or gets reused by a later full run.
 
 ## 6. The careful bits / gotchas (why each matters)
 
