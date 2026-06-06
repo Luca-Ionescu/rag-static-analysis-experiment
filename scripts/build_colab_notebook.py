@@ -64,7 +64,7 @@ CELLS.append(code(
     "MODEL = 'Qwen/Qwen2.5-Coder-1.5B'\n"
     "MODEL_FAMILY = 'qwen'\n"
     "DATASET = 'repoeval_function'\n"
-    "MAX_TOKENS = 512       # function bodies are multi-line; 512 avoids truncation\n"
+    "MAX_TOKENS = 280       # p99 of RepoEval-function gold bodies (~277 tok); covers 99%\n"
     "T_RAG = 0.9\n"
     "TOP_K = 10\n"
     "ESTIMATOR = 'models/estimator_qwen25_1.5b.lgb'   # committed Qwen estimator\n"
