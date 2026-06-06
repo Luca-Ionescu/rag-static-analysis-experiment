@@ -8,7 +8,7 @@ Git auth follows the proven pattern from the MasterThesis lightccn notebooks:
 the GitHub REST API (Bearer PAT) is used for BOTH pulling the repo (tarball
 endpoint) and pushing results (Contents API, per-file) — no ``git clone`` /
 ``git push`` (which fail in Colab with fine-grained tokens). The PAT is read
-from a Colab Secret named ``GITHUB_PAT`` (fallback: env var, then getpass).
+from a Colab Secret named ``LUCA_GITHUB_PAT`` (fallback: env var, then getpass).
 Results are uploaded incrementally as each config finishes, so a Colab
 disconnect never loses completed work.
 """
@@ -45,10 +45,10 @@ CELLS.append(md(
     "\n"
     "**Git via REST API (no clone/push):** the repo is pulled with the GitHub "
     "tarball endpoint and results are pushed with the Contents API, **per config "
-    "as it finishes** (crash-safe). PAT comes from a Colab Secret `GITHUB_PAT`.\n"
+    "as it finishes** (crash-safe). PAT comes from a Colab Secret `LUCA_GITHUB_PAT`.\n"
     "\n"
     "**Setup:** `Runtime → Change runtime type → GPU`, then add a Colab Secret "
-    "named `GITHUB_PAT` (🔑 panel, left sidebar) with a token that has "
+    "named `LUCA_GITHUB_PAT` (🔑 panel, left sidebar) with a token that has "
     "**Contents: Read and write** on this repo.\n"
     "\n"
     "Flip `SMOKE` off to go from a 3-instance check to the full 455."
@@ -94,7 +94,7 @@ CELLS.append(code(
 # --- PAT + GitHub REST helpers ---
 CELLS.append(md(
     "## 3. GitHub token + REST helpers\n"
-    "Reads `GITHUB_PAT` from Colab Secrets (🔑). No `git clone`/`push` — all "
+    "Reads `LUCA_GITHUB_PAT` from Colab Secrets (🔑). No `git clone`/`push` — all "
     "GitHub I/O goes through the REST API, which works with fine-grained tokens."
 ))
 CELLS.append(code(
@@ -103,14 +103,14 @@ CELLS.append(code(
     "def _get_pat():\n"
     "    try:\n"
     "        from google.colab import userdata\n"
-    "        pat = userdata.get('GITHUB_PAT')\n"
+    "        pat = userdata.get('LUCA_GITHUB_PAT')\n"
     "        if pat: return pat\n"
     "    except Exception as e:\n"
     "        print('  secret read:', e)\n"
-    "    pat = os.environ.get('GITHUB_PAT')\n"
+    "    pat = os.environ.get('LUCA_GITHUB_PAT')\n"
     "    if pat: return pat\n"
     "    import getpass\n"
-    "    return getpass.getpass('GITHUB_PAT (Contents: read/write): ').strip()\n"
+    "    return getpass.getpass('LUCA_GITHUB_PAT (Contents: read/write): ').strip()\n"
     "\n"
     "_GH_PAT = _get_pat()\n"
     "assert _GH_PAT, 'no PAT provided'\n"
