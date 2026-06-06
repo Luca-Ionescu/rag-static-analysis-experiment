@@ -1,45 +1,45 @@
 {
   "model": "Qwen/Qwen2.5-Coder-1.5B",
   "dataset": "repoeval_function",
-  "smoke": true,
+  "smoke": false,
   "max_tokens": 280,
   "t_rag": 0.9,
   "configs": {
     "C1_no_retrieve": {
-      "n": 3,
+      "n": 455,
       "retrieval_pct": 0.0,
-      "exact_match": 0.0,
-      "edit_similarity": 0.5147088698310279,
-      "identifier_f1": 0.4996825396825397,
-      "repo_symbol_precision": 1.0,
-      "hallucination_rate": 0.0
+      "exact_match": 0.054945054945054944,
+      "edit_similarity": 0.43074875769364973,
+      "identifier_f1": 0.5845594822022377,
+      "repo_symbol_precision": 0.8979909129474474,
+      "hallucination_rate": 0.12967032967032968
     },
     "C2_always_retrieve": {
-      "n": 3,
+      "n": 455,
       "retrieval_pct": 100.0,
-      "exact_match": 0.6666666666666666,
-      "edit_similarity": 0.954859895727787,
-      "identifier_f1": 1.0,
-      "repo_symbol_precision": 1.0,
-      "hallucination_rate": 0.0
+      "exact_match": 0.6241758241758242,
+      "edit_similarity": 0.8875016800326547,
+      "identifier_f1": 0.9327841756040696,
+      "repo_symbol_precision": 0.9318211702827088,
+      "hallucination_rate": 0.12747252747252746
     },
     "C3_card": {
-      "n": 3,
+      "n": 455,
       "retrieval_pct": 100.0,
-      "exact_match": 0.6666666666666666,
-      "edit_similarity": 0.954859895727787,
-      "identifier_f1": 1.0,
-      "repo_symbol_precision": 1.0,
-      "hallucination_rate": 0.0
+      "exact_match": 0.6241758241758242,
+      "edit_similarity": 0.8875016800326547,
+      "identifier_f1": 0.9327841756040696,
+      "repo_symbol_precision": 0.9318211702827088,
+      "hallucination_rate": 0.12747252747252746
     },
     "C4_cascade": {
-      "n": 3,
+      "n": 455,
       "retrieval_pct": 100.0,
-      "exact_match": 0.6666666666666666,
-      "edit_similarity": 0.954859895727787,
-      "identifier_f1": 1.0,
-      "repo_symbol_precision": 1.0,
-      "hallucination_rate": 0.0
+      "exact_match": 0.6241758241758242,
+      "edit_similarity": 0.8875016800326547,
+      "identifier_f1": 0.9327841756040696,
+      "repo_symbol_precision": 0.9318211702827088,
+      "hallucination_rate": 0.12747252747252746
     }
   }
 }
