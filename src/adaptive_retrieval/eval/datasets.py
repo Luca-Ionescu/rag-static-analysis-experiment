@@ -217,3 +217,21 @@ def load_repoeval(
                 target_file=str(Path(*fpath_tuple)),
                 repository=repo_name,
             )
+
+
+# ---------- central dataset registry (single source of truth for --dataset) ----------
+# Lets every script toggle the benchmark with one CLI flag. CrossCodeEval is the
+# default; the RepoEval entries need the RepoCoder data provisioned under
+# data/repoeval/ (see load_repoeval). 04_run_experiment.py keeps its own copy of
+# this map for back-compat; the post-hoc scripts import this one.
+DATASET_LOADERS = {
+    "crosscodeeval_py": lambda: load_crosscodeeval_python(),
+    "repoeval_line": lambda: load_repoeval(task="line"),
+    "repoeval_api": lambda: load_repoeval(task="api"),
+    "repoeval_function": lambda: load_repoeval(task="function"),
+}
+
+# Tasks whose completion is a multi-line body (no first-line truncation at
+# scoring time). CrossCodeEval line-completion truncates to one line; RepoEval
+# function-completion does not.
+MULTILINE_DATASETS = {"repoeval_function"}

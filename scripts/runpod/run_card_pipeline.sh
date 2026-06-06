@@ -203,40 +203,62 @@ else
         2>&1 | tee "$LOG_DIR/train_estimator.log"
 fi
 
-# ---------- Phase 5: prepare benchmark data (CCE-Python) ----------
-# data/ is gitignored (the full 847 MB CrossCodeEval corpus is too large to
-# track), so the benchmark JSONL does NOT arrive via `git clone`. We ship only
-# the single file the Python benchmark consumes — line_completion_rg1_bm25.jsonl,
-# 2665 instances — as a 4.4 MB gzipped asset committed under
-# scripts/runpod/assets/, and decompress it here into the exact path the loader
-# (src/adaptive_retrieval/eval/datasets.py:DEFAULT_CCE_PYTHON_PATH) expects.
-# Idempotent: skips if the JSONL is already present.
-phase "5/7 Prepare benchmark data (CCE-Python)"
-CCE_JSONL="data/crosscodeeval/crosscodeeval_data/python/line_completion_rg1_bm25.jsonl"
-CCE_ARCHIVE="scripts/runpod/assets/cce_python_rg1_bm25.jsonl.gz"
-EXPECTED_CCE_LINES=2665
-if [[ -s "$CCE_JSONL" ]]; then
-    echo "[skip] $CCE_JSONL already present ($(wc -l < "$CCE_JSONL") lines)"
+# ---------- Phase 5: prepare benchmark data ----------
+# CrossCodeEval ships as a committed gzipped asset (decompressed below).
+# RepoEval is too large to commit, so it must be provisioned once under
+# data/repoeval/ on the persistent volume (see load_repoeval).
+phase "5/7 Prepare benchmark data ($DATASET)"
+if [[ "$DATASET" == crosscodeeval_py ]]; then
+    CCE_JSONL="data/crosscodeeval/crosscodeeval_data/python/line_completion_rg1_bm25.jsonl"
+    CCE_ARCHIVE="scripts/runpod/assets/cce_python_rg1_bm25.jsonl.gz"
+    EXPECTED_CCE_LINES=2665
+    if [[ -s "$CCE_JSONL" ]]; then
+        echo "[skip] $CCE_JSONL already present ($(wc -l < "$CCE_JSONL") lines)"
+    else
+        if [[ ! -f "$CCE_ARCHIVE" ]]; then
+            echo "[error] benchmark archive missing: $CCE_ARCHIVE" >&2
+            echo "        It is committed to the repo — are you on an up-to-date main?" >&2
+            exit 1
+        fi
+        mkdir -p "$(dirname "$CCE_JSONL")"
+        gunzip -c "$CCE_ARCHIVE" > "$CCE_JSONL"
+        lines=$(wc -l < "$CCE_JSONL")
+        echo "[prep] decompressed $CCE_ARCHIVE -> $CCE_JSONL ($lines lines)"
+        if [[ "$lines" -ne "$EXPECTED_CCE_LINES" ]]; then
+            echo "[error] expected $EXPECTED_CCE_LINES instances, got $lines — archive looks corrupt." >&2
+            rm -f "$CCE_JSONL"
+            exit 1
+        fi
+    fi
+elif [[ "$DATASET" == repoeval_* ]]; then
+    # RepoEval data lives on the persistent volume (too big to commit). Provision once, e.g.:
+    #   git clone --depth 1 https://github.com/microsoft/CodeT /tmp/CodeT
+    #   mkdir -p data/repoeval && cp -r /tmp/CodeT/RepoCoder/datasets data/repoeval/datasets
+    #   # then extract the repositories archive into data/repoeval/repositories/
+    if [[ ! -d data/repoeval/datasets || ! -d data/repoeval/repositories ]]; then
+        echo "[error] RepoEval data not found (data/repoeval/{datasets,repositories} missing)." >&2
+        echo "        Provision the RepoCoder datasets + repositories under data/repoeval/ then re-run:" >&2
+        echo "        https://github.com/microsoft/CodeT/tree/main/RepoCoder" >&2
+        exit 1
+    fi
+    echo "[prep] RepoEval data present ($(ls data/repoeval/datasets/*.jsonl 2>/dev/null | wc -l | tr -d ' ') dataset files)"
+    if [[ "$DATASET" == repoeval_function && "$MAX_TOKENS" -lt 128 ]]; then
+        echo "[warn] repoeval_function with MAX_TOKENS=$MAX_TOKENS — function bodies need more; set MAX_TOKENS=256+." >&2
+    fi
 else
-    if [[ ! -f "$CCE_ARCHIVE" ]]; then
-        echo "[error] benchmark archive missing: $CCE_ARCHIVE" >&2
-        echo "        It is committed to the repo — are you on an up-to-date main?" >&2
-        exit 1
-    fi
-    mkdir -p "$(dirname "$CCE_JSONL")"
-    gunzip -c "$CCE_ARCHIVE" > "$CCE_JSONL"
-    lines=$(wc -l < "$CCE_JSONL")
-    echo "[prep] decompressed $CCE_ARCHIVE -> $CCE_JSONL ($lines lines)"
-    if [[ "$lines" -ne "$EXPECTED_CCE_LINES" ]]; then
-        echo "[error] expected $EXPECTED_CCE_LINES instances, got $lines — archive looks corrupt." >&2
-        rm -f "$CCE_JSONL"
-        exit 1
-    fi
+    echo "[error] unknown DATASET=$DATASET (expected crosscodeeval_py or repoeval_*)" >&2
+    exit 1
 fi
 
-# ---------- Phase 6: run C1-C4 on CCE-Python ----------
-phase "6/7 Benchmark C1-C4 on CCE-Python (~1.5h)"
-RESULTS_DIR="results/codellama_7b"
+# ---------- Phase 6: run C1-C4 ----------
+phase "6/7 Benchmark C1-C4 on $DATASET (~1.5h)"
+# Keep CrossCodeEval at the existing path (back-compat); separate other datasets
+# so results never collide when switching benchmarks.
+if [[ "$DATASET" == crosscodeeval_py ]]; then
+    RESULTS_DIR="results/codellama_7b"
+else
+    RESULTS_DIR="results/codellama_7b_${DATASET}"
+fi
 
 run_config() {
     local cfg=$1

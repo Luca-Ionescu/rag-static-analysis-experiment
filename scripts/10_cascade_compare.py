@@ -34,7 +34,7 @@ import click  # noqa: E402
 import numpy as np  # noqa: E402
 from scipy.stats import binomtest  # noqa: E402
 
-from adaptive_retrieval.eval.datasets import load_crosscodeeval_python  # noqa: E402
+from adaptive_retrieval.eval.datasets import DATASET_LOADERS  # noqa: E402
 from adaptive_retrieval.static_analysis.analyzer import PredictionAnalyzer  # noqa: E402
 from adaptive_retrieval.static_analysis.pyflakes_checker import PyflakesChecker  # noqa: E402
 from adaptive_retrieval.static_analysis.scope import InFileScopeAnalyzer  # noqa: E402
@@ -57,17 +57,19 @@ def _mcnemar(card: list[int], casc: list[int]) -> tuple[float, int, int]:
 @click.command()
 @click.option("--results-dir", default="hf_artifacts/results/codellama_7b_line",
               type=click.Path(exists=True, file_okay=False))
+@click.option("--dataset", type=click.Choice(list(DATASET_LOADERS)), default="crosscodeeval_py",
+              help="Benchmark the JSONL came from (used to rebuild per-instance state).")
 @click.option("--checker", type=click.Choice(["ast", "pyflakes", "both"]), default="both",
               help="Which cascade static-checker architecture(s) to run.")
 @click.option("--context-lines", default=50,
               help="Left-context window (lines) for the AST checker — CARD's calibration window.")
 @click.option("--t-grid", default="0.05,0.10,0.15,0.20,0.25,0.28,0.30,0.35,0.40,0.45")
-def main(results_dir: str, checker: str, context_lines: int, t_grid: str) -> None:
+def main(results_dir: str, dataset: str, checker: str, context_lines: int, t_grid: str) -> None:
     D = Path(results_dir)
     load = lambda n: {r["instance_id"]: r for r in (
         json.loads(l) for l in open(D / n, encoding="utf-8") if l.strip())}
     c1, c2, c3 = load("C1_no_retrieve.jsonl"), load("C2_always_retrieve.jsonl"), load("C3_card.jsonl")
-    insts = {i.instance_id: i for i in load_crosscodeeval_python()}
+    insts = {i.instance_id: i for i in DATASET_LOADERS[dataset]()}
     ids = [i for i in sorted(set(c1) & set(c2) & set(c3) & set(insts))
            if c3[i].get("s_hat_0") is not None]
     n = len(ids)

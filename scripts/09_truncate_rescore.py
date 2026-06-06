@@ -41,8 +41,9 @@ import click  # noqa: E402
 import jsonlines  # noqa: E402
 
 from adaptive_retrieval.eval.datasets import (  # noqa: E402
+    DATASET_LOADERS,
+    MULTILINE_DATASETS,
     build_repo_chunks_index,
-    load_crosscodeeval_python,
 )
 from adaptive_retrieval.metrics import (  # noqa: E402
     edit_similarity,
@@ -53,23 +54,22 @@ from adaptive_retrieval.static_analysis.analyzer import PredictionAnalyzer  # no
 from adaptive_retrieval.static_analysis.scope import InFileScopeAnalyzer  # noqa: E402
 from adaptive_retrieval.static_analysis.symbol_table import RepositorySymbolTable  # noqa: E402
 
-_DATASET_LOADERS = {"crosscodeeval_py": load_crosscodeeval_python}
-
 # FIM / sentinel markers that leak into raw generations when the model is not
-# stopped at the completion boundary. If one shares the first line, cut at it.
+# stopped at the completion boundary. If one shares the kept span, cut at it.
 _FIM_MARKERS = (
     "<|", "▁<", "<fim", "<PRE>", "<SUF>", "<MID>", "<EOT>", "<MID", "</s>", "<｜",
 )
 
 
-def truncate_to_line(text: str) -> str:
-    """First physical line, with any FIM sentinel on that line removed."""
-    line = text.split("\n", 1)[0]
+def truncate(text: str, n_lines: int) -> str:
+    """Keep the first ``n_lines`` lines (``n_lines <= 0`` keeps all — for
+    multi-line function completion), with any FIM sentinel removed."""
+    out = text if n_lines <= 0 else "\n".join(text.split("\n")[:n_lines])
     for m in _FIM_MARKERS:
-        i = line.find(m)
+        i = out.find(m)
         if i != -1:
-            line = line[:i]
-    return line
+            out = out[:i]
+    return out
 
 
 def _serialise(items) -> list[dict]:
@@ -92,18 +92,27 @@ def _symbol_files(inst, repo_index, use_repo_union) -> dict[str, str]:
 
 @click.command()
 @click.argument("input_path", type=click.Path(exists=True))
-@click.option("--dataset", type=click.Choice(list(_DATASET_LOADERS)), required=True)
+@click.option("--dataset", type=click.Choice(list(DATASET_LOADERS)), required=True)
 @click.option("--output", required=True, type=click.Path())
 @click.option("--limit", default=None, type=int, help="Cap on records (testing).")
+@click.option(
+    "--truncate-lines",
+    default=None,
+    type=int,
+    help="Lines to keep at scoring time. Default: 1 for line tasks (CCE), "
+    "0 (keep full body) for multi-line tasks (repoeval_function).",
+)
 @click.option(
     "--use-repo-union/--no-repo-union",
     default=True,
     help="Match Phase 6 (run_experiment default is True).",
 )
-def main(input_path, dataset, output, limit, use_repo_union) -> None:
+def main(input_path, dataset, output, limit, truncate_lines, use_repo_union) -> None:
+    if truncate_lines is None:
+        truncate_lines = 0 if dataset in MULTILINE_DATASETS else 1
     print(f"[setup] input={input_path}")
-    print(f"        dataset={dataset}  use_repo_union={use_repo_union}")
-    index = {inst.instance_id: inst for inst in _DATASET_LOADERS[dataset]()}
+    print(f"        dataset={dataset}  truncate_lines={truncate_lines}  use_repo_union={use_repo_union}")
+    index = {inst.instance_id: inst for inst in DATASET_LOADERS[dataset]()}
     print(f"  loaded {len(index)} instances")
     repo_index = build_repo_chunks_index(index.values()) if use_repo_union else {}
 
@@ -137,7 +146,7 @@ def main(input_path, dataset, output, limit, use_repo_union) -> None:
                 writer.write(rec)
                 continue
 
-            pred = truncate_to_line(rec["prediction"])
+            pred = truncate(rec["prediction"], truncate_lines)
             gt = inst.ground_truth
 
             repo = inst.repository or ""
