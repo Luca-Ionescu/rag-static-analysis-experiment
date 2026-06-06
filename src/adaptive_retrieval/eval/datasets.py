@@ -181,7 +181,7 @@ def load_repoeval(
         )
 
     with jsonlines.open(jsonl) as reader:
-        for rec in reader:
+        for row_idx, rec in enumerate(reader):
             meta = rec["metadata"]
             fpath_tuple = meta["fpath_tuple"]
             fpath = repos_root.joinpath(*fpath_tuple)
@@ -231,12 +231,21 @@ def load_repoeval(
                 except (OSError, UnicodeDecodeError):
                     continue
 
+            # RepoCoder's metadata task_id is a non-unique placeholder
+            # ("<repo>/idx" — the index is never filled), so all instances of a
+            # repo share it. Build a unique instance_id from the row index plus
+            # the file/line/function so per-instance joins (selectivity check,
+            # cascade compare, McNemar pairing) match correctly.
+            base_id = meta.get("task_id", repo_name) or repo_name
+            fn = meta.get("function_name", "")
+            instance_id = f"{base_id}#{row_idx}:{'/'.join(fpath_tuple)}:{line_no}:{fn}"
+
             yield Instance(
                 x_left=x_left,
                 x_right=x_right,
                 ground_truth=gt,
                 repo_files=repo_files,
-                instance_id=meta.get("task_id", ""),
+                instance_id=instance_id,
                 target_file=str(Path(*fpath_tuple)),
                 repository=repo_name,
             )
