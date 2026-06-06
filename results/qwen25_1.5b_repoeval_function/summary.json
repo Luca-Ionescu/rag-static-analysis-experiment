@@ -1,0 +1,45 @@
+{
+  "model": "Qwen/Qwen2.5-Coder-1.5B",
+  "dataset": "repoeval_function",
+  "smoke": true,
+  "max_tokens": 512,
+  "t_rag": 0.9,
+  "configs": {
+    "C1_no_retrieve": {
+      "n": 3,
+      "retrieval_pct": 0.0,
+      "exact_match": 0.0,
+      "edit_similarity": 0.42132683802610754,
+      "identifier_f1": 0.48069475240206944,
+      "repo_symbol_precision": 0.8888888888888888,
+      "hallucination_rate": 0.3333333333333333
+    },
+    "C2_always_retrieve": {
+      "n": 3,
+      "retrieval_pct": 100.0,
+      "exact_match": 0.0,
+      "edit_similarity": 0.3237472219836703,
+      "identifier_f1": 0.4920720720720721,
+      "repo_symbol_precision": 0.8566176470588235,
+      "hallucination_rate": 0.6666666666666666
+    },
+    "C3_card": {
+      "n": 3,
+      "retrieval_pct": 100.0,
+      "exact_match": 0.0,
+      "edit_similarity": 0.3237472219836703,
+      "identifier_f1": 0.4920720720720721,
+      "repo_symbol_precision": 0.8566176470588235,
+      "hallucination_rate": 0.6666666666666666
+    },
+    "C4_cascade": {
+      "n": 3,
+      "retrieval_pct": 100.0,
+      "exact_match": 0.0,
+      "edit_similarity": 0.3237472219836703,
+      "identifier_f1": 0.4920720720720721,
+      "repo_symbol_precision": 0.8566176470588235,
+      "hallucination_rate": 0.6666666666666666
+    }
+  }
+}
