@@ -50,7 +50,17 @@ def truncate_to_function_body(reference: str, prediction: str) -> str:
     ref_nb = [ln for ln in reference.splitlines() if ln.strip()]
     if not ref_nb:
         return prediction
-    body_indent = _indentation(ref_nb[0])
+    # Body indent = the shallowest INDENTED gold line. We can't just take the
+    # first line's indent: some benchmarks (Repoformer CrossCodeLongEval) move
+    # the gold's first-line leading whitespace into the prompt, so the gold's
+    # first line sits at column 0. A function body never legitimately contains a
+    # column-0 line, so the shallowest line with indent > 0 is the true body
+    # indent; falling back to the first line only when nothing is indented (a
+    # degenerate single-token body). This keeps RepoEval unchanged (its gold
+    # first line already carries the base indent == min positive indent).
+    indents = [_indentation(ln) for ln in ref_nb]
+    positive = [i for i in indents if i > 0]
+    body_indent = min(positive) if positive else indents[0]
 
     out: list[str] = []
     seen_body = False
