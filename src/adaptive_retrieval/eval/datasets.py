@@ -261,6 +261,127 @@ def load_repoeval(
             )
 
 
+# ---------- CrossCodeLongEval (Repoformer benchmark) ----------
+
+DEFAULT_CCLE_BASE = Path("data/crosscodelongeval")
+
+# Relative path of each task's JSONL inside the extracted tarballs. ``{variant}``
+# is ``rg1`` (BM25-retrieved cross-file context) or ``oracle`` (gold). Both
+# variants carry the SAME 5000 instances and identical in-file prompt/right
+# context; only ``crossfile_context`` differs — so the variant only changes the
+# cross-file symbol table, never what is generated. We default to rg1.
+_CCLE_FILES = {
+    "chunk": "cceval_chunk_eval_data/python_chunk_completion_sparse_{variant}.jsonl",
+    "function": "cceval_function_eval_data/python_function_completion_sparse_{variant}.jsonl",
+}
+
+_CFC_SEP = "# the below code fragment can be found in:"
+
+
+def _parse_cfc_fragments(cfc: str) -> dict[str, str]:
+    """Recover ``{path: code}`` from CrossCodeLongEval's commented cross-file block.
+
+    The ``crossfile_context`` field ships retrieved fragments as a single comment
+    block: a preamble, then sections introduced by ``_CFC_SEP`` followed by a
+    ``# <path>`` line and the fragment's source lines, each prefixed with ``# ``.
+    We strip the ``# `` prefix to recover real Python so the symbol table sees
+    actual definitions (not comment tokens), grouping by path so multiple
+    fragments from one file are concatenated. Unlike CrossCodeEval (which ships a
+    structured ``crossfile_context.list`` of {filename, retrieved_chunk}), here
+    the chunks are flattened into one comment string, so we parse them back out.
+    """
+    files: dict[str, str] = {}
+    if not cfc:
+        return files
+    for blk in cfc.split(_CFC_SEP)[1:]:  # [0] is the preamble — drop it
+        decommented: list[str] = []
+        for ln in blk.split("\n"):
+            if ln.startswith("# "):
+                decommented.append(ln[2:])
+            elif ln == "#":
+                decommented.append("")
+            else:
+                decommented.append(ln)
+        path: str | None = None
+        body: list[str] = []
+        for ln in decommented:
+            if path is None:
+                if ln.strip():
+                    path = ln.strip()
+                continue
+            body.append(ln)
+        if not path:
+            continue
+        text = "\n".join(body).strip("\n")
+        if path in files:
+            files[path] += "\n" + text
+        else:
+            files[path] = text
+    return files
+
+
+def load_crosscodelongeval(
+    task: str = "function",
+    base_path: str | Path = DEFAULT_CCLE_BASE,
+    variant: str = "rg1",
+    include_target_file: bool = True,
+) -> Iterator[Instance]:
+    """Stream Python CrossCodeLongEval instances (Repoformer, ICML 2024).
+
+    ``task`` is ``"chunk"`` or ``"function"``; each ships 5000 Python instances.
+    Unlike RepoEval, the left (``prompt``) and right (``right_context``) context
+    are PRE-BUILT — no on-disk file reconstruction. By construction the in-file
+    context is the whole file split at the hole (verified against the benchmark's
+    builder, ``1_create_chunk.py`` / ``1_create_function.py``):
+      * function: blank lines kept    -> x_left + gt + x_right == the original file
+      * chunk:    blank lines stripped -> == the file minus blank lines (the AST
+        and lexical scope are identical, so Tier-1 scope analysis is unaffected)
+    Either way the reconstruction spans file start -> EOF, so the in-file symbol
+    table the static analyzer builds is complete.
+
+    ``variant`` selects the shipped cross-file retrieval flavour (``rg1`` = BM25,
+    ``oracle`` = gold); it only populates the cross-file symbol table and never
+    enters the prompt.
+    """
+    if task not in _CCLE_FILES:
+        raise ValueError(f"task must be one of chunk/function, got {task!r}")
+
+    base = Path(base_path)
+    jsonl = base / _CCLE_FILES[task].format(variant=variant)
+    if not jsonl.exists():
+        raise FileNotFoundError(
+            f"CrossCodeLongEval data not found: {jsonl}. Download the tarballs "
+            f"(cceval_chunk_eval_data.tar.gz / cceval_function_eval_data.tar.gz) "
+            f"from https://github.com/amazon-science/Repoformer (crosscodelongeval/) "
+            f"and extract under {base}/"
+        )
+
+    with jsonlines.open(jsonl) as reader:
+        for rec in reader:
+            meta = rec.get("metadata", {})
+            target_file = meta.get("filename", "current_file.py")
+
+            # Cross-file symbol table from the retrieved fragments, plus the
+            # synthesised current file (so in-file names resolve). task_id is
+            # globally unique (verified 5000/5000 for both tasks).
+            repo_files = _parse_cfc_fragments(rec.get("crossfile_context", ""))
+            if include_target_file:
+                repo_files[target_file] = (
+                    rec["prompt"] + rec["groundtruth"] + rec.get("right_context", "")
+                )
+
+            repository = target_file.split("/")[0] if "/" in target_file else None
+            yield Instance(
+                x_left=rec["prompt"],
+                x_right=rec.get("right_context", ""),
+                ground_truth=rec["groundtruth"],
+                repo_files=repo_files,
+                instance_id=meta.get("task_id", ""),
+                target_file=target_file,
+                repository=repository,
+            )
+
+
 # ---------- central dataset registry (single source of truth for --dataset) ----------
 # Lets every script toggle the benchmark with one CLI flag. CrossCodeEval is the
 # default; the RepoEval entries need the RepoCoder data provisioned under
@@ -271,9 +392,15 @@ DATASET_LOADERS = {
     "repoeval_line": lambda: load_repoeval(task="line"),
     "repoeval_api": lambda: load_repoeval(task="api"),
     "repoeval_function": lambda: load_repoeval(task="function"),
+    "crosscodelongeval_chunk": lambda: load_crosscodelongeval(task="chunk"),
+    "crosscodelongeval_function": lambda: load_crosscodelongeval(task="function"),
 }
 
 # Tasks whose completion is a multi-line body (no first-line truncation at
-# scoring time). CrossCodeEval line-completion truncates to one line; RepoEval
-# function-completion does not.
-MULTILINE_DATASETS = {"repoeval_function"}
+# scoring time), and which therefore get body-truncated scoring + a dual
+# untruncated ``metrics_raw``. CrossCodeEval line-completion truncates to one
+# line; RepoEval function-completion does not. CrossCodeLongEval-function is a
+# multi-line body too. CrossCodeLongEval-chunk is intentionally EXCLUDED: its
+# gold is a short block (mean 1.5, max 6 lines) scored as-is, no body
+# truncation.
+MULTILINE_DATASETS = {"repoeval_function", "crosscodelongeval_function"}

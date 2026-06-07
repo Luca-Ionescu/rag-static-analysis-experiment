@@ -42,6 +42,8 @@ ESTIMATOR = '__ESTIMATOR__'
 CALIBRATE = __CALIBRATE__          # 0.5B: calibrate a fresh estimator on the-stack-dedup
 RESULTS_TAG = '__TAG__'
 
+# CrossCodeLongEval lives in its own notebooks (build_crosscodelongeval_notebooks.py),
+# which carry the extra tarball-provisioning cell; keep this builder on CCE+RepoEval.
 DATASETS = ['crosscodeeval_py', 'repoeval_function']
 MAX_TOKENS = {'crosscodeeval_py': 50, 'repoeval_function': 280}
 GEN_T_RAG = 0.5         # only used so C3 stores s_hat_0; the real sweep is post-hoc
@@ -334,8 +336,13 @@ def build(gen):
     }
 
 
-for gen in GENERATORS:
-    nb = build(gen)
-    path = OUT_DIR / f"experiment_{gen['tag']}.ipynb"
-    path.write_text(json.dumps(nb, indent=1))
-    print("wrote", path, f"({len(nb['cells'])} cells)")
+def main():
+    for gen in GENERATORS:
+        nb = build(gen)
+        path = OUT_DIR / f"experiment_{gen['tag']}.ipynb"
+        path.write_text(json.dumps(nb, indent=1))
+        print("wrote", path, f"({len(nb['cells'])} cells)")
+
+
+if __name__ == "__main__":
+    main()

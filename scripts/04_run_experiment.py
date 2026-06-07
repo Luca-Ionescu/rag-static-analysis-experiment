@@ -29,6 +29,7 @@ import click  # noqa: E402
 from adaptive_retrieval.card.estimator import Estimator  # noqa: E402
 from adaptive_retrieval.eval.datasets import (  # noqa: E402
     load_crosscodeeval_python,
+    load_crosscodelongeval,
     load_repoeval,
 )
 from adaptive_retrieval.eval.runner import VALID_CONFIGS, run_experiment  # noqa: E402
@@ -44,6 +45,8 @@ _DATASET_LOADERS = {
     "repoeval_line": lambda: load_repoeval(task="line"),
     "repoeval_api": lambda: load_repoeval(task="api"),
     "repoeval_function": lambda: load_repoeval(task="function"),
+    "crosscodelongeval_chunk": lambda: load_crosscodelongeval(task="chunk"),
+    "crosscodelongeval_function": lambda: load_crosscodelongeval(task="function"),
 }
 
 
