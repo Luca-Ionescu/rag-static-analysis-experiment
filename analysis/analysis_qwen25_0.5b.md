@@ -1,0 +1,85 @@
+# Analysis — Qwen2.5-Coder-0.5B (RepoEval-function + CrossCodeEval-Python)
+
+Generator: **Qwen/Qwen2.5-Coder-0.5B** (vLLM, FIM, greedy, max_tokens: 50 CCE / 280 RepoEval-fn, stop-tokens on).
+**This model calibrated its OWN estimator** from the-stack-dedup (the others reused pre-committed ones). Run completed 2026-06-07 ~10:27 CEST after a runtime-timeout recovery (restarted on A100 high-RAM at 07:45).
+Configs: **C1** no-retrieve, **C2** always-retrieve (BM25 top-10), **C3** CARD gate, **C4** cascade (CARD + 3-tier static gate). C3/C4 swept over T_RAG ∈ [0.05, 0.95].
+Metrics: **EM**, **ES**, **IdF1**, **hall_A4** (emitted id absent from gold — loose), **hall_A4B2** (invented id: absent from gold AND resolves nowhere — strict), **retrieval%**, **latency** (ms/inst). RepoEval-fn headline = **body** (dedent-truncated).
+
+---
+
+## 1. Headline (C1 vs C2)
+
+### CrossCodeEval-Python (line)
+| Config | Retr% | EM | ES | IdF1 | hall_A4B2 | hall_A4 | Latency |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| C1 no-retrieve     | 0   | 0.205 | 0.556 | 0.519 | 0.0281 | 0.667 | 199 |
+| C2 always-retrieve | 100 | **0.856** | **0.929** | **0.923** | **0.0083** | **0.114** | 264 |
+
+### RepoEval-function (body)
+| Config | Retr% | EM | ES | IdF1 | hall_A4B2 | hall_A4 | Latency |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| C1 no-retrieve     | 0   | 0.046 | 0.357 | 0.483 | 0.1165 | 0.804 | 1280 |
+| C2 always-retrieve | 100 | **0.339** | **0.717** | **0.784** | **0.0967** | **0.378** | 1248 |
+
+Retrieval decisive again: CCE ES 0.56→0.93, EM 0.21→0.86; RepoEval-fn ES 0.36→0.72, EM 0.046→0.339. As expected, the 0.5B C1 floor is the **lowest of the three models** (weakest parametric knowledge), and its C1 hallucination is the **highest** (RepoEval-fn hall_A4B2 0.117 vs 1.5B 0.070, 7B 0.024) — smaller models invent more.
+
+---
+
+## 2. Cascade (C4) vs CARD (C3) — strongest cascade effect of the three models
+
+### RepoEval-function (body), selected T_RAG
+| T_RAG | C3 retr% | C3 ES | C3 hallA4B2 | C4 retr% | C4 ES | C4 hallA4B2 |
+|--:|--:|--:|--:|--:|--:|--:|
+| 0.05–0.15 | 0.0 | 0.357 | 0.1165 | **13.8** | **0.400** | **0.0418** |
+| 0.20 | 2.4 | 0.369 | 0.1165 | 15.8 | 0.409 | **0.0440** |
+| 0.25 | 44.4 | 0.541 | 0.0945 | 50.3 | 0.558 | 0.0725 |
+| 0.30 | 73.6 | 0.640 | 0.0989 | 76.0 | 0.644 | 0.0857 |
+
+### CrossCodeEval (line), selected T_RAG
+| T_RAG | C3 retr% | C3 ES | C3 hallA4B2 | C4 retr% | C4 ES | C4 hallA4B2 |
+|--:|--:|--:|--:|--:|--:|--:|
+| 0.05 | 0.2 | 0.558 | 0.0281 | **3.2** | **0.574** | **0.0015** |
+| 0.10 | 0.6 | 0.561 | 0.0281 | 3.5 | 0.577 | **0.0015** |
+| 0.20 | 5.6 | 0.589 | 0.0274 | 8.3 | 0.605 | **0.0019** |
+| 0.25 | 37.4 | 0.744 | 0.0184 | 38.8 | 0.752 | 0.0049 |
+| 0.30 | 57.6 | 0.818 | 0.0169 | 58.5 | 0.824 | 0.0071 |
+
+**Findings.**
+1. **The cascade's benefit is LARGEST at 0.5B** — because the 0.5B hallucinates most, the static gate has the most to catch. At low T_RAG it adds the biggest retrieval bump of the three models (RepoEval-fn **+13.8%**, CCE **+3%**) and the biggest hallucination cut: RepoEval-fn hall_A4B2 **0.117→0.042** (2.8×↓), CCE **0.028→0.0015** (19×↓).
+2. **Accuracy lift is also the clearest:** RepoEval-fn ES +0.043 (0.357→0.400) and EM +0.037 (0.046→0.084) at low T_RAG; CCE ES +0.016.
+3. **Asymmetry holds:** C4 retr% ≥ C3, C4 ES ≥ C3, C4 hall ≤ C3 at every T_RAG.
+
+---
+
+## 3. Cross-model context (this run vs the other two)
+
+| | 0.5B | 1.5B | 7B |
+|---|--:|--:|--:|
+| C1 ES (CCE) | 0.556 | 0.631 | 0.652 |
+| C2 ES (CCE) | 0.929 | 0.961 | 0.961 |
+| C1 ES (RepoEval-fn body) | 0.357 | 0.431 | 0.444 |
+| C2 ES (RepoEval-fn body) | 0.717 | 0.888 | 0.839 |
+| C1 hall_A4B2 (RepoEval-fn) | **0.117** | 0.070 | 0.024 |
+| Cascade hall cut @low T_RAG (RepoEval-fn) | **2.8×** | 16× | 2.7× |
+
+Clean monotone story on C1 accuracy (0.5B < 1.5B < 7B) and on C1 hallucination (0.5B > 1.5B > 7B). The cascade helps **all three**; its absolute hallucination-reduction is largest where hallucination is largest.
+
+---
+
+## 4. CARD gate shape (0.5B)
+0.5B's CARD gate is **graded**, not binary — retr% rises smoothly (CCE: 0.2→0.6→1.4→5.6→37→58→71→78→…→100 over T_RAG 0.05→0.95). So even the smallest model gives a tunable operating curve here (better than the 1.5B's sharper 0.3–0.5 jump). Its self-calibrated estimator is functioning.
+
+---
+
+## 5. Efficiency
+- 0.5B is fastest per instance (CCE C1 199 ms; RepoEval-fn C1 1280 ms — note RepoEval-fn latency includes BM25 over the full repo).
+- Cascade buys the hallucination reduction at low retrieval %: e.g. CCE T_RAG=0.05, +3% retrieval, 19× hall cut, +9 ms latency.
+
+---
+
+## 6. Takeaways
+- **0.5B is the weakest but benefits most from the cascade** — it hallucinates most at C1, so the static gate's absolute reduction is largest.
+- **Retrieval decisive**, cascade ≈ matches/edges CARD on accuracy while cutting invented hallucinations across the low/mid T_RAG range — RQ2 supported at the smallest scale too.
+- Self-calibrated estimator works and yields a smooth gate.
+
+_Generated by the Colab monitor after the Qwen2.5-0.5B run completed both datasets (post timeout-recovery)._
