@@ -63,6 +63,13 @@ def _truncation_for(dataset_name: str):
 # C2, so batching C1+C2 first makes them cheap too.
 _BATCHABLE_CONFIGS = ("C1_no_retrieve", "C2_always_retrieve")
 
+# Configs whose per-instance logic genuinely needs the in-house static analyzer
+# (the cascade's static gate / the static-only trigger). For every other config
+# the analyzer is only used for the descriptive scope-precision + in-house
+# hallucination flag, which are redundant with the sweep's pyflakes pass — so we
+# skip the costly per-instance symbol-table build and stay generation-bound.
+_STATIC_CONFIGS = ("C4_cascade", "C5_static_only")
+
 
 def _serialise(items) -> list[dict]:
     """Convert a list of CallIssue / ImportIssue dataclasses to dicts."""
@@ -118,19 +125,33 @@ def _mean_metrics(records: list[dict], key: str) -> dict[str, float]:
 
 # ---------- per-instance dispatch ----------
 
-def _score(inst: Instance, prediction: str, analyzer: PredictionAnalyzer) -> dict:
-    """Compute the metric dict for one prediction string."""
-    return {
+def _score(inst: Instance, prediction: str, analyzer: PredictionAnalyzer | None) -> dict:
+    """Compute the metric dict for one prediction string.
+
+    When ``analyzer is None`` the static-analysis metrics (scope precision,
+    hallucination flag) are skipped and given schema-preserving placeholders.
+    Those depend on a per-instance repository symbol table (tree-sitter parse of
+    every cross-file fragment), which dominates runtime at ~2.5s/instance and
+    swamps the batched generator. The authoritative hallucination signal is
+    recomputed once in the post-hoc sweep (pyflakes, on the complete
+    prediction), so the baselines (C1/C2/C3) skip it here for throughput.
+    """
+    m = {
         "exact_match": exact_match(inst.ground_truth, prediction),
         "edit_similarity": edit_similarity(inst.ground_truth, prediction),
         "identifier_f1": identifier_f1(inst.ground_truth, prediction),
-        "repo_symbol_precision": repository_symbol_precision(
-            prediction, inst.x_left, inst.x_right, analyzer
-        ),
-        "hallucinated": hallucination_flag(
-            prediction, inst.x_left, inst.x_right, analyzer
-        ),
     }
+    if analyzer is not None:
+        m["repo_symbol_precision"] = repository_symbol_precision(
+            prediction, inst.x_left, inst.x_right, analyzer
+        )
+        m["hallucinated"] = hallucination_flag(
+            prediction, inst.x_left, inst.x_right, analyzer
+        )
+    else:
+        m["repo_symbol_precision"] = 1.0   # placeholder; sweep is authoritative
+        m["hallucinated"] = False          # placeholder; sweep is authoritative
+    return m
 
 
 def _build_record(
@@ -366,7 +387,8 @@ def _run_experiment_batched(
                 record = _build_record(
                     inst, gen.prediction, retrieved=retrieved_flag,
                     trigger_reason=trigger, latency_ms=latency,
-                    analyzer=make_analyzer(inst), truncate_fn=truncate_fn,
+                    analyzer=make_analyzer(inst) if make_analyzer else None,
+                    truncate_fn=truncate_fn,
                 )
                 record["dataset"] = dataset_name
                 record["config"] = config
@@ -427,7 +449,13 @@ def run_experiment(
     # + raw metric sets per record; single-line datasets get one set.
     truncate_fn = _truncation_for(dataset_name)
 
-    make_analyzer = _make_analyzer_factory(instances_list, use_repo_union)
+    # Only build the (expensive) per-instance analyzer factory for configs that
+    # actually consult the static analyzer; otherwise skip it entirely so the
+    # symbol table is never built (the sweep computes hallucination post-hoc).
+    needs_static = config in _STATIC_CONFIGS
+    make_analyzer = (
+        _make_analyzer_factory(instances_list, use_repo_union) if needs_static else None
+    )
 
     # Fast path: the two single-pass baselines (C1/C2) are batched through the
     # generator (vLLM continuous batching) — ~order-of-magnitude faster than
@@ -454,10 +482,9 @@ def run_experiment(
     with jsonlines.open(output_path, "w") as writer:
         for inst in iterator:
             retriever = BM25Retriever(inst.repo_files)
-            # Symbol table: per-repo union (if enabled) merged with this
-            # instance's target file. BM25 retrieval is unchanged — that uses
-            # only the instance's own 5 chunks.
-            analyzer = make_analyzer(inst)
+            # Symbol table only built for configs that consult the static gate;
+            # None otherwise (the sweep computes hallucination post-hoc).
+            analyzer = make_analyzer(inst) if make_analyzer else None
             record = _run_single_instance(
                 config, inst, generator, retriever, analyzer, estimator,
                 model_family, t_rag, top_k, truncate_fn=truncate_fn,
