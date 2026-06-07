@@ -80,6 +80,27 @@ def truncate_to_function_body(reference: str, prediction: str) -> str:
     return "\n".join(out)
 
 
+def truncate_to_line_count(reference: str, prediction: str) -> str:
+    """Truncate a prediction to the ground-truth's non-empty line count.
+
+    The Python-faithful analogue for fixed-size **block/chunk** completion. The
+    Repoformer benchmark scores chunk completion by keeping only the first
+    ``num_target_lines`` non-empty lines of the prediction
+    (``repo_eval/eval_metric.py``: ``[l for l in pred.split('\\n') if l.strip()]
+    [:num_target_lines]``), where ``num_target_lines`` is the count of non-empty
+    gold lines. Without this, a model that keeps generating past the short block
+    (chunk golds are 1-6 lines) is penalised for the overflow; with first-*line*-
+    only scoring, a correct multi-line block is penalised for lines 2..n. This
+    matches the benchmark: count non-empty gold lines, keep that many non-empty
+    prediction lines.
+    """
+    n = sum(1 for ln in reference.split("\n") if ln.strip())
+    if n <= 0:
+        return prediction
+    pred_lines = [ln for ln in prediction.split("\n") if ln.strip()][:n]
+    return "\n".join(pred_lines)
+
+
 # ---------- accuracy ----------
 
 def exact_match(reference: str, prediction: str) -> bool:

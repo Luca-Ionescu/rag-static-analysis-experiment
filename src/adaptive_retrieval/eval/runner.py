@@ -31,13 +31,29 @@ from ..metrics import (
     identifier_f1,
     repository_symbol_precision,
     truncate_to_function_body,
+    truncate_to_line_count,
 )
 from ..prompt import build_fim_prompt
 from ..retriever import BM25Retriever, make_query
 from ..static_analysis.analyzer import PredictionAnalyzer
 from ..static_analysis.scope import InFileScopeAnalyzer
 from ..static_analysis.symbol_table import RepositorySymbolTable
-from .datasets import MULTILINE_DATASETS, Instance, build_repo_chunks_index
+from .datasets import (
+    LINE_COUNT_DATASETS,
+    MULTILINE_DATASETS,
+    Instance,
+    build_repo_chunks_index,
+)
+
+
+def _truncation_for(dataset_name: str):
+    """Pick the scoring-time truncation function for a dataset (None = score the
+    raw prediction; single metric set)."""
+    if dataset_name in MULTILINE_DATASETS:
+        return truncate_to_function_body          # function body (dedent boundary)
+    if dataset_name in LINE_COUNT_DATASETS:
+        return truncate_to_line_count             # fixed-size block (gold line count)
+    return None
 
 # Configs whose generation is a single pass per instance with no adaptive,
 # logit-dependent control flow — so all their prompts can be built up front and
@@ -129,7 +145,7 @@ def _build_record(
     static_out_of_scope: list[str] | None = None,
     signature_issues: list | None = None,
     import_issues: list | None = None,
-    multiline: bool = False,
+    truncate_fn=None,
 ) -> dict:
     record = {
         "instance_id": inst.instance_id,
@@ -151,12 +167,12 @@ def _build_record(
         "import_issues": import_issues or [],
         "latency_ms": latency_ms,
     }
-    if multiline:
-        # Multi-line task (RepoEval-function): the model over-generates past the
-        # function body, so the headline metrics are scored on the prediction
-        # truncated to the end of the generated body (dedent boundary). The raw,
-        # untruncated metrics are kept alongside for comparison.
-        pred_trunc = truncate_to_function_body(inst.ground_truth, prediction)
+    if truncate_fn is not None:
+        # Truncated task: the model over-generates past the target span (function
+        # body for *_function, the fixed-size block for *_chunk), so the headline
+        # metrics are scored on the truncated prediction and the raw, untruncated
+        # metrics are kept alongside for comparison.
+        pred_trunc = truncate_fn(inst.ground_truth, prediction)
         record["prediction_truncated"] = pred_trunc
         record["metrics"] = _score(inst, pred_trunc, analyzer)        # main
         record["metrics_raw"] = _score(inst, prediction, analyzer)    # secondary
@@ -175,12 +191,12 @@ def _run_single_instance(
     model_family: str,
     t_rag: float,
     top_k: int,
-    multiline: bool = False,
+    truncate_fn=None,
 ) -> dict:
-    # Bind the multi-line flag so every _rec(...) below emits both the
-    # truncated (main) and raw metric sets for function-level datasets.
+    # Bind the truncation fn so every _rec(...) below emits both the truncated
+    # (main) and raw metric sets for truncated datasets (function / chunk).
     from functools import partial
-    _rec = partial(_build_record, multiline=multiline)
+    _rec = partial(_build_record, truncate_fn=truncate_fn)
     if config == "C1_no_retrieve":
         out = no_retrieve_baseline(generator, inst.x_left, inst.x_right, model_family)
         return _rec(
@@ -311,7 +327,7 @@ def _batched_prompt(config: str, inst: Instance, model_family: str, top_k: int) 
 
 def _run_experiment_batched(
     config, dataset_name, instances_list, generator, output_path,
-    model_family, top_k, multiline, make_analyzer, batch_size, progress,
+    model_family, top_k, truncate_fn, make_analyzer, batch_size, progress,
 ) -> "RunSummary":
     """Batched fast-path for C1/C2: build all prompts, generate in chunks via
     ``generator.generate_batch`` (vLLM continuous batching), then score.
@@ -350,7 +366,7 @@ def _run_experiment_batched(
                 record = _build_record(
                     inst, gen.prediction, retrieved=retrieved_flag,
                     trigger_reason=trigger, latency_ms=latency,
-                    analyzer=make_analyzer(inst), multiline=multiline,
+                    analyzer=make_analyzer(inst), truncate_fn=truncate_fn,
                 )
                 record["dataset"] = dataset_name
                 record["config"] = config
@@ -407,9 +423,9 @@ def run_experiment(
 
     instances_list = list(instances)
 
-    # Multi-line datasets (function-body completion) get truncated (main) +
-    # raw metric sets per record; single-line datasets get one set.
-    multiline = dataset_name in MULTILINE_DATASETS
+    # Truncated datasets (function-body or fixed-size block) get truncated (main)
+    # + raw metric sets per record; single-line datasets get one set.
+    truncate_fn = _truncation_for(dataset_name)
 
     make_analyzer = _make_analyzer_factory(instances_list, use_repo_union)
 
@@ -419,7 +435,7 @@ def run_experiment(
     if batch_size and batch_size > 1 and config in _BATCHABLE_CONFIGS:
         return _run_experiment_batched(
             config, dataset_name, instances_list, generator, output_path,
-            model_family, top_k, multiline, make_analyzer, batch_size, progress,
+            model_family, top_k, truncate_fn, make_analyzer, batch_size, progress,
         )
 
     iterator = instances_list
@@ -444,7 +460,7 @@ def run_experiment(
             analyzer = make_analyzer(inst)
             record = _run_single_instance(
                 config, inst, generator, retriever, analyzer, estimator,
-                model_family, t_rag, top_k, multiline=multiline,
+                model_family, t_rag, top_k, truncate_fn=truncate_fn,
             )
             record["dataset"] = dataset_name
             record["config"] = config

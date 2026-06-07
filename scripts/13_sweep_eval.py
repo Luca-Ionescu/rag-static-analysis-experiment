@@ -39,7 +39,11 @@ if str(SRC) not in sys.path:
 import click  # noqa: E402
 import numpy as np  # noqa: E402
 
-from adaptive_retrieval.eval.datasets import DATASET_LOADERS, MULTILINE_DATASETS  # noqa: E402
+from adaptive_retrieval.eval.datasets import (  # noqa: E402
+    DATASET_LOADERS,
+    LINE_COUNT_DATASETS,
+    MULTILINE_DATASETS,
+)
 from adaptive_retrieval.metrics import (  # noqa: E402
     edit_similarity,
     exact_match,
@@ -47,6 +51,7 @@ from adaptive_retrieval.metrics import (  # noqa: E402
     identifier_f1,
     invented_identifier_flag,
     truncate_to_function_body,
+    truncate_to_line_count,
 )
 from adaptive_retrieval.static_analysis.pyflakes_checker import PyflakesChecker  # noqa: E402
 
@@ -66,6 +71,11 @@ def _clean(raw: str, gold: str, mode: str) -> str:
     s = _strip(raw)
     if mode == "line":
         return s.split("\n", 1)[0]
+    if mode == "lines":
+        # Fixed-size block: keep the gold's non-empty line count (Repoformer
+        # chunk metric). Distinct from "line" (single-line CCE) — chunk golds
+        # span 1-6 lines, so first-line-only would wreck multi-line blocks.
+        return truncate_to_line_count(gold, s)
     if mode == "body":
         return truncate_to_function_body(gold, s)
     return s  # "full"
@@ -85,7 +95,12 @@ def main(results_dir: str, dataset: str, out_csv: str, t_grid: str) -> None:
     ids = [i for i in sorted(set(c1) & set(c2) & set(c3) & set(insts))
            if c3[i].get("s_hat_0") is not None]
     n = len(ids)
-    modes = ["body", "full"] if dataset in MULTILINE_DATASETS else ["line"]
+    if dataset in MULTILINE_DATASETS:
+        modes = ["body", "full"]          # function: dedent body + raw
+    elif dataset in LINE_COUNT_DATASETS:
+        modes = ["lines", "full"]         # chunk: gold-line-count + raw
+    else:
+        modes = ["line"]                  # single-line (CCE)
     thresholds = [round(float(x), 4) for x in t_grid.split(",")]
     pf = PyflakesChecker()
     LAT = lambda r: float(r.get("latency_ms") or 0.0)

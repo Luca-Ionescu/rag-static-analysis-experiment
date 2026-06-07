@@ -404,3 +404,11 @@ DATASET_LOADERS = {
 # gold is a short block (mean 1.5, max 6 lines) scored as-is, no body
 # truncation.
 MULTILINE_DATASETS = {"repoeval_function", "crosscodelongeval_function"}
+
+# Block/chunk datasets: the gold is a fixed-size span of N (1-6) lines, so the
+# prediction is truncated to the gold's non-empty line count at scoring time
+# (matching Repoformer's chunk metric) rather than to a function body. These get
+# the same dual (truncated main + raw) metric treatment as MULTILINE_DATASETS,
+# but with line-count truncation instead of dedent body truncation. Kept
+# separate from MULTILINE_DATASETS so each picks the right truncation function.
+LINE_COUNT_DATASETS = {"crosscodelongeval_chunk"}
