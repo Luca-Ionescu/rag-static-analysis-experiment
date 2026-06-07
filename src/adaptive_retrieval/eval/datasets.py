@@ -180,6 +180,12 @@ def load_repoeval(
             f"Download the repositories archive from the same RepoCoder repo."
         )
 
+    # One repo serves hundreds of instances; read each repo's .py files ONCE and
+    # share the same dict across all its instances (the consumers — BM25Retriever,
+    # the symbol-union builder — only read it). Without this every instance held a
+    # private full copy of its repo, blowing system RAM into the tens of GB.
+    repo_files_cache: dict[str, dict[str, str]] = {}
+
     with jsonlines.open(jsonl) as reader:
         for row_idx, rec in enumerate(reader):
             meta = rec["metadata"]
@@ -221,15 +227,19 @@ def load_repoeval(
             # the file exactly. Cheap guard against future metadata drift.
             assert x_left + gt + x_right == full_content
 
-            # Per-instance "repository" = every .py under the target repo's root.
+            # Per-instance "repository" = every .py under the target repo's root,
+            # cached and shared across all instances of the same repo.
             repo_name = fpath_tuple[0]
-            repo_dir = repos_root / repo_name
-            repo_files: dict[str, str] = {}
-            for f in repo_dir.rglob("*.py"):
-                try:
-                    repo_files[str(f.relative_to(repo_dir))] = f.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError):
-                    continue
+            repo_files = repo_files_cache.get(repo_name)
+            if repo_files is None:
+                repo_dir = repos_root / repo_name
+                repo_files = {}
+                for f in repo_dir.rglob("*.py"):
+                    try:
+                        repo_files[str(f.relative_to(repo_dir))] = f.read_text(encoding="utf-8")
+                    except (OSError, UnicodeDecodeError):
+                        continue
+                repo_files_cache[repo_name] = repo_files
 
             # RepoCoder's metadata task_id is a non-unique placeholder
             # ("<repo>/idx" — the index is never filled), so all instances of a
