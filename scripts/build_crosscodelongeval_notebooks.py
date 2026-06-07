@@ -43,7 +43,7 @@ from build_experiment_notebooks import (  # noqa: E402
 # the base CONFIG; everything else (git, sweep grid, configs) is identical.
 CONFIG_CCLE = """# ---- experiment knobs ----
 SMOKE = True            # True: tiny end-to-end check. Flip OFF for the full run.
-SMOKE_LIMIT = 3
+SMOKE_LIMIT = 32
 
 MODEL = '__MODEL__'
 MODEL_FAMILY = '__FAMILY__'
@@ -101,7 +101,7 @@ def build_ccle(gen):
            f"GPU: {gen['gpu_note']}\n\n"
            "Setup: `Runtime → GPU`; Colab Secret `LUCA_GITHUB_PAT` (Contents: read/write)"
            + ("; `HF_TOKEN` (the-stack-dedup license accepted)." if gen['calibrate'] else ".")
-           + "\n\n**SMOKE is ON** (3 instances/config) for a fast dry run — flip "
+           + "\n\n**SMOKE is ON** (SMOKE_LIMIT instances/config) for a fast dry run — flip "
            "`SMOKE = False` in the Config cell for the full run."),
         md("## 1. Config"),
         code(CONFIG_CCLE.replace("__MODEL__", gen["model"]).replace("__FAMILY__", gen["family"])

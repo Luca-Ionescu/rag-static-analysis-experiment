@@ -34,7 +34,7 @@ def code(src):  # code cell
 
 CONFIG = """# ---- experiment knobs ----
 SMOKE = True            # True: tiny check. Flip OFF for the full run.
-SMOKE_LIMIT = 3
+SMOKE_LIMIT = 32
 
 MODEL = '__MODEL__'
 MODEL_FAMILY = '__FAMILY__'
