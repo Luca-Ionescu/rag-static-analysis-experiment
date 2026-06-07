@@ -19,8 +19,8 @@ GENERATORS = [
          estimator="models/estimator_qwen25_1.5b.lgb", calibrate=False,
          gpu_note="Fits T4/L4."),
     dict(tag="qwen25_0.5b", model="Qwen/Qwen2.5-Coder-0.5B", family="qwen",
-         estimator="models/estimator_qwen25_0.5b.lgb", calibrate=True,
-         gpu_note="Fits T4/L4. Calibrates its estimator first (the-stack-dedup, gated)."),
+         estimator="models/estimator_qwen25_0.5b.lgb", calibrate=False,
+         gpu_note="Fits T4/L4. Estimator already on main (no calibration needed)."),
 ]
 
 
