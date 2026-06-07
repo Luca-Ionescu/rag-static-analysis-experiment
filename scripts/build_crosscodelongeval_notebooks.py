@@ -60,6 +60,7 @@ DATASETS = ['crosscodelongeval_function', 'crosscodelongeval_chunk']
 MAX_TOKENS = {'crosscodelongeval_function': 400, 'crosscodelongeval_chunk': 80}
 GEN_T_RAG = 0.5         # only used so C3 stores s_hat_0; the real sweep is post-hoc
 TOP_K = 10
+BATCH_SIZE = 256        # C1/C2 batched through vLLM (continuous batching); ~order-of-magnitude faster
 T_GRID = ','.join(f'{t:.2f}' for t in [0.05*i for i in range(1, 20)])  # 0.05..0.95
 GEN_CONFIGS = ['C1_no_retrieve', 'C2_always_retrieve', 'C3_card']      # C4 + sweep are post-hoc
 

@@ -90,6 +90,13 @@ def _resolve_generator(backend: str, model: str, max_tokens: int, cache_dir: str
 @click.option("--t-rag", default=0.9, type=float)
 @click.option("--top-k", default=10, type=int)
 @click.option(
+    "--batch-size",
+    default=1,
+    type=int,
+    help="Batch size for the C1/C2 generation fast-path (vLLM continuous "
+         "batching). 1 = legacy per-instance path. Use ~64-512 on GPU.",
+)
+@click.option(
     "--cache-dir",
     default="data/generation_cache",
     type=str,
@@ -107,6 +114,7 @@ def main(
     limit: int | None,
     t_rag: float,
     top_k: int,
+    batch_size: int,
     cache_dir: str,
 ) -> None:
     print(f"[setup] config={config} dataset={dataset} backend={backend} model={model}")
@@ -132,6 +140,7 @@ def main(
         model_family=model_family,
         t_rag=t_rag,
         top_k=top_k,
+        batch_size=batch_size,
     )
 
     print(f"\n[done] {summary.n_instances} instances written to {output}")

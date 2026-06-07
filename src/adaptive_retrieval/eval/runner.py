@@ -12,6 +12,7 @@ Per-instance JSONL schema follows §15.1. Aggregates follow §15.2.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Iterable
@@ -31,11 +32,20 @@ from ..metrics import (
     repository_symbol_precision,
     truncate_to_function_body,
 )
-from ..retriever import BM25Retriever
+from ..prompt import build_fim_prompt
+from ..retriever import BM25Retriever, make_query
 from ..static_analysis.analyzer import PredictionAnalyzer
 from ..static_analysis.scope import InFileScopeAnalyzer
 from ..static_analysis.symbol_table import RepositorySymbolTable
 from .datasets import MULTILINE_DATASETS, Instance, build_repo_chunks_index
+
+# Configs whose generation is a single pass per instance with no adaptive,
+# logit-dependent control flow — so all their prompts can be built up front and
+# sent to the generator as one batch (vLLM continuous batching). The adaptive
+# configs (C3/C4/C5/C6) stay on the per-instance path, but ride the shared
+# generation cache: their zero-shot call hits C1 and their retrieved call hits
+# C2, so batching C1+C2 first makes them cheap too.
+_BATCHABLE_CONFIGS = ("C1_no_retrieve", "C2_always_retrieve")
 
 
 def _serialise(items) -> list[dict]:
@@ -264,6 +274,105 @@ def _run_single_instance(
     raise ValueError(f"Unknown config: {config!r}. Valid: {VALID_CONFIGS}")
 
 
+# ---------- shared helpers ----------
+
+def _make_analyzer_factory(instances_list, use_repo_union):
+    """Return ``analyzer(inst) -> PredictionAnalyzer`` with the per-repo symbol
+    union (if enabled) pre-indexed once."""
+    repo_index = build_repo_chunks_index(instances_list) if use_repo_union else {}
+
+    def make(inst: Instance) -> PredictionAnalyzer:
+        sym_files: dict[str, str] = {}
+        if use_repo_union and inst.repository:
+            sym_files.update(repo_index.get(inst.repository, {}))
+        sym_files.update(inst.repo_files)
+        return PredictionAnalyzer(
+            InFileScopeAnalyzer(),
+            RepositorySymbolTable.from_files(sym_files),
+        )
+
+    return make
+
+
+def _batched_prompt(config: str, inst: Instance, model_family: str, top_k: int) -> str:
+    """Build the FIM prompt for a batchable config exactly as its baseline does
+    (so cache keys match the per-instance path and C3/C4 still hit the cache)."""
+    if config == "C1_no_retrieve":
+        return build_fim_prompt(
+            inst.x_left, inst.x_right, retrieved=None, model_family=model_family
+        )
+    # C2_always_retrieve
+    retriever = BM25Retriever(inst.repo_files)
+    chunks = retriever.retrieve(make_query(inst.x_left), top_k=top_k)
+    return build_fim_prompt(
+        inst.x_left, inst.x_right, retrieved=chunks, model_family=model_family
+    )
+
+
+def _run_experiment_batched(
+    config, dataset_name, instances_list, generator, output_path,
+    model_family, top_k, multiline, make_analyzer, batch_size, progress,
+) -> "RunSummary":
+    """Batched fast-path for C1/C2: build all prompts, generate in chunks via
+    ``generator.generate_batch`` (vLLM continuous batching), then score.
+
+    Identical records to the per-instance path (same prompts -> same predictions
+    and cache keys); only far faster. Writes JSONL per chunk so a disconnect
+    mid-run keeps everything generated so far. Per-instance ``latency_ms`` is the
+    generator's per-sequence latency when vLLM reports it, else the chunk
+    wall-clock amortised over the chunk (the honest throughput-based per-item
+    cost under batching); BM25 retrieval for C2 happens in the build loop and is
+    not folded into per-item latency (it is ~ms vs seconds of generation).
+    """
+    retrieved_flag = config == "C2_always_retrieve"
+    trigger = "always" if retrieved_flag else "none"
+
+    starts = range(0, len(instances_list), batch_size)
+    if progress:
+        try:
+            from tqdm import tqdm
+            starts = tqdm(list(starts), desc=f"{config}/{dataset_name} [batch {batch_size}]")
+        except ImportError:
+            pass
+
+    records: list[dict] = []
+    n_retrieved = 0
+    sum_latency = 0.0
+    with jsonlines.open(output_path, "w") as writer:
+        for start in starts:
+            batch = instances_list[start:start + batch_size]
+            prompts = [_batched_prompt(config, i, model_family, top_k) for i in batch]
+            t0 = time.perf_counter()
+            gens = generator.generate_batch(prompts)
+            amort_ms = (time.perf_counter() - t0) * 1000.0 / max(1, len(batch))
+            for inst, gen in zip(batch, gens):
+                latency = gen.latency_ms if gen.latency_ms else amort_ms
+                record = _build_record(
+                    inst, gen.prediction, retrieved=retrieved_flag,
+                    trigger_reason=trigger, latency_ms=latency,
+                    analyzer=make_analyzer(inst), multiline=multiline,
+                )
+                record["dataset"] = dataset_name
+                record["config"] = config
+                writer.write(record)
+                records.append(record)
+                if retrieved_flag:
+                    n_retrieved += 1
+                sum_latency += latency
+
+    n = len(records)
+    return RunSummary(
+        config=config,
+        dataset=dataset_name,
+        n_instances=n,
+        n_retrieved=n_retrieved,
+        percent_retrieval=100.0 * n_retrieved / n if n else 0.0,
+        mean_latency_ms=sum_latency / n if n else 0.0,
+        metrics=_mean_metrics(records, "metrics"),
+        metrics_raw=_mean_metrics(records, "metrics_raw") or None,
+    )
+
+
 # ---------- top-level runner ----------
 
 def run_experiment(
@@ -278,6 +387,7 @@ def run_experiment(
     top_k: int = 10,
     progress: bool = True,
     use_repo_union: bool = True,
+    batch_size: int = 1,
 ) -> RunSummary:
     """Run one config over a dataset. Writes per-instance records to JSONL.
 
@@ -296,7 +406,21 @@ def run_experiment(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     instances_list = list(instances)
-    repo_index = build_repo_chunks_index(instances_list) if use_repo_union else {}
+
+    # Multi-line datasets (function-body completion) get truncated (main) +
+    # raw metric sets per record; single-line datasets get one set.
+    multiline = dataset_name in MULTILINE_DATASETS
+
+    make_analyzer = _make_analyzer_factory(instances_list, use_repo_union)
+
+    # Fast path: the two single-pass baselines (C1/C2) are batched through the
+    # generator (vLLM continuous batching) — ~order-of-magnitude faster than
+    # one generate() call per instance, and produces identical records.
+    if batch_size and batch_size > 1 and config in _BATCHABLE_CONFIGS:
+        return _run_experiment_batched(
+            config, dataset_name, instances_list, generator, output_path,
+            model_family, top_k, multiline, make_analyzer, batch_size, progress,
+        )
 
     iterator = instances_list
     if progress:
@@ -306,10 +430,6 @@ def run_experiment(
             iterator = tqdm(instances_list, desc=f"{config}/{dataset_name}")
         except ImportError:
             pass
-
-    # Multi-line datasets (function-body completion) get truncated (main) +
-    # raw metric sets per record; single-line datasets get one set.
-    multiline = dataset_name in MULTILINE_DATASETS
 
     records: list[dict] = []
     n_retrieved = 0
@@ -321,14 +441,7 @@ def run_experiment(
             # Symbol table: per-repo union (if enabled) merged with this
             # instance's target file. BM25 retrieval is unchanged — that uses
             # only the instance's own 5 chunks.
-            sym_files: dict[str, str] = {}
-            if use_repo_union and inst.repository:
-                sym_files.update(repo_index.get(inst.repository, {}))
-            sym_files.update(inst.repo_files)
-            analyzer = PredictionAnalyzer(
-                InFileScopeAnalyzer(),
-                RepositorySymbolTable.from_files(sym_files),
-            )
+            analyzer = make_analyzer(inst)
             record = _run_single_instance(
                 config, inst, generator, retriever, analyzer, estimator,
                 model_family, t_rag, top_k, multiline=multiline,
