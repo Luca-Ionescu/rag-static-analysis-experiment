@@ -110,24 +110,37 @@ def main(results_dir: str, dataset: str, out_csv: str, t_grid: str) -> None:
     l1 = {i: LAT(c1[i]) for i in ids}
     l2 = {i: LAT(c2[i]) for i in ids}
 
-    # Per mode: cleaned predictions + per-instance metrics + the cascade trigger.
-    es1, es2, em1, em2, f11, f12 = ({m: {} for m in modes} for _ in range(6))
-    hAB1, hAB2, hA1, hA2, trig = ({m: {} for m in modes} for _ in range(5))
+    # Static signal — cascade trigger + hallucination (A4∧B2, A4) — is computed
+    # ONCE on the COMPLETE prediction (FIM-stripped, untruncated), never on the
+    # accuracy-truncated text. Truncating an over-generated span to the gold
+    # length can delete definitions the rest of the file uses and so
+    # manufacture/mask undefined-name flags, and the gold length is not available
+    # at inference; analysing the complete generation avoids both. These dicts
+    # are therefore flat (keyed by instance), shared across accuracy modes.
+    hAB1, hAB2, hA1, hA2, trig = ({} for _ in range(5))
     for i in ids:
         inst = insts[i]
         gold = inst.ground_truth
+        pf1 = _clean(c1[i]["prediction"], gold, "full")
+        pf2 = _clean(c2[i]["prediction"], gold, "full")
+        u1 = set(pf.analyze(pf1, inst.x_left, inst.x_right).significant_out_of_scope)
+        u2 = set(pf.analyze(pf2, inst.x_left, inst.x_right).significant_out_of_scope)
+        hAB1[i] = 1 if invented_identifier_flag(gold, pf1, u1) else 0
+        hAB2[i] = 1 if invented_identifier_flag(gold, pf2, u2) else 0
+        hA1[i] = 1 if hallucinated_identifier_flag(gold, pf1) else 0
+        hA2[i] = 1 if hallucinated_identifier_flag(gold, pf2) else 0
+        trig[i] = bool(u1)
+
+    # Accuracy (ES/EM/idF1) IS reported per scoring mode (truncated + full), so
+    # the analysis can show both the benchmark-truncated and the raw view.
+    es1, es2, em1, em2, f11, f12 = ({m: {} for m in modes} for _ in range(6))
+    for i in ids:
+        gold = insts[i].ground_truth
         for m in modes:
             p1, p2 = _clean(c1[i]["prediction"], gold, m), _clean(c2[i]["prediction"], gold, m)
             es1[m][i], es2[m][i] = edit_similarity(gold, p1), edit_similarity(gold, p2)
             em1[m][i], em2[m][i] = exact_match(gold, p1), exact_match(gold, p2)
             f11[m][i], f12[m][i] = identifier_f1(gold, p1), identifier_f1(gold, p2)
-            u1 = set(pf.analyze(p1, inst.x_left, inst.x_right).significant_out_of_scope)
-            u2 = set(pf.analyze(p2, inst.x_left, inst.x_right).significant_out_of_scope)
-            hAB1[m][i] = 1 if invented_identifier_flag(gold, p1, u1) else 0
-            hAB2[m][i] = 1 if invented_identifier_flag(gold, p2, u2) else 0
-            hA1[m][i] = 1 if hallucinated_identifier_flag(gold, p1) else 0
-            hA2[m][i] = 1 if hallucinated_identifier_flag(gold, p2) else 0
-            trig[m][i] = bool(u1)
 
     out_path = Path(out_csv)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -135,13 +148,16 @@ def main(results_dir: str, dataset: str, out_csv: str, t_grid: str) -> None:
 
     def agg(mode, pick, two_pass):  # pick(i)->True uses C2 (retrieved) else C1
         g = lambda d1, d2: np.mean([d2[mode][i] if pick(i) else d1[mode][i] for i in ids])
+        # Hallucination dicts are flat (full-prediction based), so the picked
+        # value doesn't depend on the accuracy mode.
+        gh = lambda d1, d2: np.mean([d2[i] if pick(i) else d1[i] for i in ids])
         if two_pass:   # CARD/cascade: always a zero-shot probe + a conditional retrieved gen
             lat = np.mean([l1[i] + (l2[i] if pick(i) else 0.0) for i in ids])
         else:          # baselines: exactly one generation
             lat = np.mean([l2[i] if pick(i) else l1[i] for i in ids])
         retr = np.mean([1 if pick(i) else 0 for i in ids])
         return dict(retrieval_pct=100 * retr, exact_match=g(em1, em2), edit_similarity=g(es1, es2),
-                    identifier_f1=g(f11, f12), hall_A4B2=g(hAB1, hAB2), hall_A4=g(hA1, hA2),
+                    identifier_f1=g(f11, f12), hall_A4B2=gh(hAB1, hAB2), hall_A4=gh(hA1, hA2),
                     latency_ms=lat)
 
     for mode in modes:
@@ -153,7 +169,7 @@ def main(results_dir: str, dataset: str, out_csv: str, t_grid: str) -> None:
             rows.append(dict(dataset=dataset, scoring=mode, config="C3_card", t_rag=t,
                              **agg(mode, lambda i, t=t: shat[i] < t, two_pass=True)))
             rows.append(dict(dataset=dataset, scoring=mode, config="C4_cascade", t_rag=t,
-                             **agg(mode, lambda i, t=t: shat[i] < t or trig[mode][i], two_pass=True)))
+                             **agg(mode, lambda i, t=t: shat[i] < t or trig[i], two_pass=True)))
 
     fields = ["dataset", "scoring", "config", "t_rag", "retrieval_pct", "exact_match",
               "edit_similarity", "identifier_f1", "hall_A4B2", "hall_A4", "latency_ms"]
