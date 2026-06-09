@@ -447,12 +447,18 @@ per task to the 99th percentile of gold length in tokens --- 50 (CrossCodeEval),
 280 (RepoEval-function), 400 (CCLong-function), and 80 (CCLong-chunk) --- so the
 model can express the full target without unbounded over-generation.
 
-\textbf{Adaptive gate.} CARD's estimator is a LightGBM
-regressor~\cite{ke2017lightgbm} over a 13-dimensional aggregation of per-token
-probabilities and entropies that predicts the zero-shot output's ES, reproduced
-from the original paper~\cite{zhang2024card}. It is calibrated once per model on
-samples from The Stack (deduplicated)~\cite{kocetkov2022stack} and reused across
-all datasets (the estimator is a property of the generator, not the benchmark). The
+\textbf{Adaptive gate.} CARD's critique estimator predicts the zero-shot output's
+edit similarity from a 13-dimensional aggregation of the generator's per-token
+probabilities and entropies~\cite{zhang2024card}; we implement it as a LightGBM
+regressor~\cite{ke2017lightgbm}. Because those features are extracted from the
+generator's \emph{own} logits, the estimator is model-specific: we calibrate
+\textbf{three separate estimators, one per generator} (Qwen2.5-Coder-0.5B,
+Qwen2.5-Coder-1.5B, and CodeLlama-7B), each on self-supervised samples from The
+Stack (deduplicated)~\cite{kocetkov2022stack} following the CARD
+procedure~\cite{zhang2024card}. Each estimator is a property of its generator,
+not of any benchmark, so it is calibrated once and reused unchanged across all
+four datasets and the entire $T_{\text{RAG}}$ sweep; the gradient-boosted model
+itself is lightweight (sub-millisecond inference per instance). The
 Tier-1 static gate is realised with pyflakes over the reconstructed file. Retrieval
 is Okapi BM25~\cite{robertson2009bm25} over 20-line/stride-10 windows, returning the
 top-10 chunks, following the RepoCoder convention~\cite{zhang2023repocoder}.
