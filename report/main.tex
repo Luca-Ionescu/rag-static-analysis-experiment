@@ -179,8 +179,9 @@ confidence cannot distinguish a syntactically correct line from one whose
 identifiers do not exist anywhere in the repository. We complement
 CARD with a second gate that parses the structure of the
 zero-shot prediction rather than the model's confidence, and triggers
-retrieval whenever the prediction falls under one of three classes of
-hallucination that the logit signal missed.
+retrieval whenever \rev{the prediction uses an identifier that cannot be
+resolved in the current file's scope --- the structural hallucination} the
+logit signal missed.
 
 Because their decisions are not symmetric, we compose the two gates by subordination: the static gate runs only when CARD says skip. A static fire is positive evidence of a flagrant structural hallucination, while the absence of a static fire is not positive evidence
 of correctness, only that the prediction violates none of the patterns the gate enumerates.
@@ -208,9 +209,9 @@ the RepoCoder convention~\cite{zhang2023repocoder}, regenerate, and
 return the retrieved-context prediction.
 
 \textbf{Stage 3: static-analysis gate.} If CARD said skip, we
-parse $\hat{y}_0$ with tree-sitter and run three independent checks
-against the repository's symbol table. If any
-check fires, we retrieve and regenerate exactly as in Stage 2. Otherwise
+parse $\hat{y}_0$ and \rev{flag it when an identifier in a significant
+position cannot be resolved in the current file's scope (Section~\ref{sec:analyzer}).
+If the check fires}, we retrieve and regenerate exactly as in Stage 2. Otherwise
 we commit $\hat{y}_0$ as the final prediction.
 
 \subsection{Data}
@@ -254,42 +255,24 @@ left/right in-file context and a retrieved cross-file block, which we use exactl
 as for CrossCodeEval. All four evaluation surfaces and their statistics are
 presented together in Section~\ref{sec:dataset}.}
 
-\subsection{Tier 1: Out-of-scope identifiers}
-\label{sec:tier1}
-\rev{Tier~1 targets the most common structural hallucination: a call or reference
-to a name that is not defined anywhere visible at the hole. We parse $\hat{y}_0$
-and collect identifiers appearing in \emph{significant positions} --- a call
-target, an attribute receiver, a subscript value, a class base, a bare decorator,
-an exception type, or a \texttt{raise} target --- positions where the identifier
-must denote a real, bound object for the code to run. An identifier in such a
-position fires Tier~1 if it is not resolvable in the lexical scope of the current
-file (it is not a builtin, not imported, and not bound by a preceding
-definition, assignment, parameter, comprehension, \texttt{with}/\texttt{except}
-alias, etc., in $X_{\text{left}}$/$X_{\text{right}}$). Tier~1 is purely a scope
-check and needs no repository symbol table. In our evaluation we realise this
-check with pyflakes' undefined-name analysis (F821) over the reconstructed file,
-which gives a binding-complete, false-positive-resistant version of the same
-signal; this is the gate isolated in all reported cascade results.}
-
-\subsection{Tier 2: Signature mismatches}
-\label{sec:tier2}
-\rev{Tier~2 catches calls to functions that \emph{do} exist in the repository but
-are invoked incorrectly. For every call in $\hat{y}_0$ whose callee can be
-resolved in the repository symbol table, we compare the call site against the
-callee's declared signature (arity and keyword names) and fire on an
-incompatibility (e.g., too many positional arguments, or an unknown keyword).
-Unlike Tier~1, Tier~2 consults the symbol table built from the cross-file
-context.}
-
-\subsection{Tier 3: Wrong-origin imports}
-\label{sec:tier3}
-\rev{Tier~3 validates the provenance of imported names and module attributes
-against the repository's module map: it fires when a symbol is imported from a
-module that does not export it, or an attribute is accessed on a module that does
-not define it. Tiers~2 and~3 are implemented in our in-house tree-sitter analyzer
-and broaden the gate's coverage; because Tier~1 is by far the dominant and most
-robust signal, the experiments in this paper isolate the Tier~1 gate and leave a
-per-tier ablation to future work (Section~\ref{sec:future}).}
+\subsection{Static-Analysis Gate}
+\label{sec:analyzer}
+\rev{The static gate targets a single, dominant structural hallucination: a use of
+an identifier that is not defined anywhere visible at the hole. We parse
+$\hat{y}_0$ and collect the identifiers that appear in \emph{significant
+positions} --- a call target, an attribute receiver, a subscript value, a class
+base, a bare decorator, an exception type, or a \texttt{raise} target --- the
+positions where the identifier must denote a real, bound object for the code to
+run (an out-of-scope name in, say, a docstring or comment is harmless and
+ignored). The gate fires if any such identifier is not resolvable in the lexical
+scope of the current file: it is not a Python builtin, not imported, and not
+bound by a preceding definition, assignment, parameter, comprehension, or
+\texttt{with}/\texttt{except} alias in $X_{\text{left}}$/$X_{\text{right}}$. This
+is purely a scope/resolvability check and needs no repository symbol table. In
+practice we realise it with pyflakes' undefined-name analysis (F821) over the
+reconstructed file, which gives a binding-complete, false-positive-resistant
+implementation of exactly this signal and is what drives every cascade result we
+report.}
 
 \subsection{Datasets}
 \label{sec:dataset}
@@ -392,7 +375,7 @@ critique estimator. We compare four configurations, all sharing the same
 generator and retriever so differences isolate the gating policy: \textbf{C1}
 no-retrieve (in-file context only), \textbf{C2} always-retrieve,
 \textbf{C3} CARD (retrieve iff $\hat{s}_0 < T_{\text{RAG}}$), and \textbf{C4}
-the cascade (C3, plus retrieve when the Tier-1 static gate fires on a skipped
+the cascade (C3, plus retrieve when the static-analysis gate fires on a skipped
 instance). Rather than reporting C3/C4 at one threshold, we sweep
 $T_{\text{RAG}}\in\{0.05,\dots,0.95\}$ to trace the entire cost--accuracy
 operating curve.
@@ -429,7 +412,7 @@ to an oracle length can delete a definition the rest of the file uses --- thereb
 \emph{manufacturing} an undefined-name flag that the model never produced --- and
 the gold length is unavailable at inference. Computing the structural signal on the
 complete generation both avoids this artefact and matches what a deployed gate
-would see. The same principle governs the cascade's Tier-1 trigger.
+would see. The same principle governs the cascade's static-gate trigger.
 
 \textbf{Efficiency metrics.} We report the \emph{retrieval rate} (\% of instances
 for which retrieval fired), the direct cost knob, and per-instance
@@ -459,7 +442,8 @@ procedure~\cite{zhang2024card}. Each estimator is a property of its generator,
 not of any benchmark, so it is calibrated once and reused unchanged across all
 four datasets and the entire $T_{\text{RAG}}$ sweep; the gradient-boosted model
 itself is lightweight (sub-millisecond inference per instance). The
-Tier-1 static gate is realised with pyflakes over the reconstructed file. Retrieval
+static-analysis gate is realised with pyflakes over the reconstructed file
+(Section~\ref{sec:analyzer}). Retrieval
 is Okapi BM25~\cite{robertson2009bm25} over 20-line/stride-10 windows, returning the
 top-10 chunks, following the RepoCoder convention~\cite{zhang2023repocoder}.
 
@@ -562,7 +546,7 @@ per-instance latency for accuracy (RQ2).}
 \subsection{RQ3: The static gate suppresses the hallucinations CARD misses}
 Table~\ref{tab:cascade} compares CARD (C3) and the cascade (C4) at a low budget
 ($T_{\text{RAG}}=0.05$, where CARD is most conservative and retrieves almost
-nothing). Adding the Tier-1 static gate retrieves an extra $2$--$9\%$ of instances
+nothing). Adding the static-analysis gate retrieves an extra $2$--$9\%$ of instances
 --- precisely those whose confident zero-shot output references an unresolvable
 name --- and cuts the invented-identifier rate by \textbf{$3.6\times$ to
 $11.3\times$} (to zero on RepoEval-1.5B). The effect is consistent across all
@@ -578,7 +562,7 @@ similarity does not fall (next subsection).
 
 \begin{table*}[tb]
 \caption{RQ3 --- the cascade's contribution at a low budget ($T_{\text{RAG}}=0.05$).
-For a few percent of extra retrieval (r\%), the Tier-1 static gate cuts the
+For a few percent of extra retrieval (r\%), the static gate cuts the
 invented-identifier rate $h_{A4B2}$ by the factor in the last column, while edit
 similarity is non-decreasing. ``$\rightarrow$0'' denotes a drop to zero.}
 \label{tab:cascade}
@@ -663,7 +647,7 @@ does not fix \emph{structural} hallucination and can worsen it
 (Table~\ref{tab:endpoints}), because more context invites more (and longer)
 generation, and thus more opportunities to invent names. This reframes selective
 retrieval: the goal is not only to skip unhelpful retrievals but to \emph{spend the
-budget on the structurally broken outputs}, which is exactly what the Tier-1 gate
+budget on the structurally broken outputs}, which is exactly what the static gate
 does. It also explains why the cascade's advantage is concentrated at low budgets
 (Fig.~\ref{fig:hall}): once a policy retrieves almost everywhere, selectivity ---
 and hence the gate's targeting --- has no room to act.
@@ -696,10 +680,11 @@ sweeps any gate over the budget axis are released to support this.
 
 \subsection{Future Work}
 \label{sec:future}
-Several directions follow directly. First, a \textbf{per-tier ablation}: we isolated
-the Tier-1 (out-of-scope) gate; Tiers~2--3 (signature and import-origin checks,
-Sections~\ref{sec:tier2}--\ref{sec:tier3}) should be measured separately, as they
-target rarer but higher-confidence structural errors. Second, \textbf{repair instead
+Several directions follow directly. First, \textbf{richer structural checks}: the
+current gate flags an out-of-scope identifier (a scope/resolvability check);
+extending it with signature/arity and import-origin checks could catch rarer but
+higher-confidence structural errors that a pure scope check misses, at the cost of
+consulting the cross-file symbol table. Second, \textbf{repair instead
 of retrieve}: the static analyzer already localises the offending identifier, so a
 cheaper action than full retrieval may be to constrain or correct that token.
 Third, \textbf{better function-level critique labels}: Repoformer notes that
@@ -717,7 +702,7 @@ functional correctness; we do not run tests (pass@k), so a ``correct'' completio
 may still be semantically wrong, and vice versa. Our hallucination metric is a
 static proxy: pyflakes cannot resolve dynamically-created or star-imported names,
 which could flag a valid identifier as undefined; we mitigate this by restricting
-Tier-1 to significant positions and by computing the signal on the reconstructed
+the gate to significant positions and by computing the signal on the reconstructed
 file (which contains the in-file imports and definitions). There is a partial
 \emph{circularity}: the cascade's trigger and the $h_{A4B2}$ metric both rest on
 undefined-name analysis, so some of the measured reduction is structural by
