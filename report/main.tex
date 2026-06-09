@@ -34,6 +34,10 @@
 % \rev{...} marks text added/changed in the sections BEFORE the Dataset section,
 % so reviewers can see what was updated when the experiments were finalised.
 \newcommand{\rev}[1]{{\color{red}#1}}
+% \new{...} (blue) marks the changes made in the latest revision, when the
+% method/report were aligned with the final code: a single pyflakes-based static
+% analyzer (no three-tier analyzer, no repository symbol table for the gate).
+\newcommand{\new}[1]{{\color{blue}#1}}
 
 
 % I suggest naming our tools, approaches, etc golablly here. 
@@ -95,7 +99,7 @@ language models, static analysis, hallucination, repository-level context}
 \end{IEEEkeywords}
 
 \section{Introduction}
-Repository level completion requires assistance from beyond the current file, as utility functions, shared variables and imported types can be defined elsewhere in the project. \textbf{Retrieval Augmented Generation} \cite{lewis2021retrievalaugmentedgenerationknowledgeintensivenlp} addresses this file by augmenting the model's prompt with cross-file-relevant snippets retrieved from the repository before generation. However, retrieval doesn't always help due to pipelines either retrieving on every instance unconditionally and do not taking into account the local context or adaptive approaches relying too much on model's confidence. Therefore, current approaches such as \textbf{CARD} \cite{zhang2024card} share a common issue: token-level confidence not distinguishing a synthactically correct line from one whose identifiers do not appear in the repository, not being able to detect structural hallucinations.  To address this gap,  we augment current models' confidence gate with a static analysis gate, which checks whether  identifiers in significant positions are visible in the scope of the current file to be edited. The cascade pipeline operates in 3 stages: zero-shot generation, CARD's confidence gate, and our free-training static analysis gate. The results of our experiments suggest that token-level confidence alone is insufficient and inefficient and that lightweight structural checks can help in avoiding structural hallucinations. Our main contribution consists of  the static analysis gate approach which detects out-of-scope identifiers hallucinations without the need for fine tuning the model and the pipeline's evaluation on the same settings as other \textbf{RAG} approaches such as \textbf{CARD} \cite{zhang2024card}, enabling a reproducible evaluation and comparison.
+Repository level completion requires assistance from beyond the current file, as utility functions, shared variables and imported types can be defined elsewhere in the project. \textbf{Retrieval Augmented Generation} \cite{lewis2021retrievalaugmentedgenerationknowledgeintensivenlp} addresses this file by augmenting the model's prompt with cross-file-relevant snippets retrieved from the repository before generation. However, retrieval doesn't always help due to pipelines either retrieving on every instance unconditionally and do not taking into account the local context or adaptive approaches relying too much on model's confidence. Therefore, current approaches such as \textbf{CARD} \cite{zhang2024card} share a common issue: token-level confidence not distinguishing a synthactically correct line from one whose identifiers do not appear in the repository, not being able to detect structural hallucinations.  To address this gap,  we augment current models' confidence gate with a static analysis gate, which checks whether \new{the identifiers the completion uses are defined in the scope of the current file being edited (we implement this check with the \textbf{pyflakes} linter)}. The cascade pipeline operates in 3 stages: zero-shot generation, CARD's confidence gate, and our free-training static analysis gate. The results of our experiments suggest that token-level confidence alone is insufficient and inefficient and that lightweight structural checks can help in avoiding structural hallucinations. Our main contribution consists of  the static analysis gate approach which detects out-of-scope identifiers hallucinations without the need for fine tuning the model and the pipeline's evaluation on the same settings as other \textbf{RAG} approaches such as \textbf{CARD} \cite{zhang2024card}, enabling a reproducible evaluation and comparison.
 \iffalse
 \instruction{The introduction is a crucial part of any paper. A compelling introduction immediately captures the reader's interest and answers the question: ``Why should I read this?" Here is the structure I use for my paper introductions. Feel free to adapt it to your needs or develop your own structure.
 
@@ -209,10 +213,10 @@ the RepoCoder convention~\cite{zhang2023repocoder}, regenerate, and
 return the retrieved-context prediction.
 
 \textbf{Stage 3: static-analysis gate.} If CARD said skip, we
-parse $\hat{y}_0$ and \rev{flag it when an identifier in a significant
-position cannot be resolved in the current file's scope (Section~\ref{sec:analyzer}).
-If the check fires}, we retrieve and regenerate exactly as in Stage 2. Otherwise
-we commit $\hat{y}_0$ as the final prediction.
+\new{run pyflakes over $X_{\text{left}}+\hat{y}_0+X_{\text{right}}$ and flag any
+identifier used in $\hat{y}_0$ that is not defined anywhere in the current file
+(Section~\ref{sec:analyzer}). If the check fires}, we retrieve and regenerate
+exactly as in Stage 2. Otherwise we commit $\hat{y}_0$ as the final prediction.
 
 \subsection{Data}
 \label{sec:data}
@@ -226,25 +230,24 @@ record providing the in-file context ($X_{\text{left}}$ from the
 the held-out completion (the \texttt{groundtruth} field), metadata
 identifying the upstream \texttt{repository} and target \texttt{file},
 and a \emph{cross-file context block} that is the only view of $R$
-available to either the BM25 retriever or our static-analysis gate.
+available to the BM25 retriever\new{; the static-analysis gate, by contrast, uses
+only the in-file context $X$ (Section~\ref{sec:analyzer})}.
 
 We use the \texttt{rg1\_bm25} variant of the dataset because it ships this
 block directly. The cross-file chunk represents a set of 5 pre-retrieved
 passages selected by BM25 from the instance-specific $R$. Each chunk is a contiguous 10-line window of a source file accompanied by its repo-relative path. The benchmark authors pre-tile every file in the upstream project into non-overlapping windows of that size and, for each instance, score those windows
 against the last 10 lines of $X_{\text{left}}$, returning the top
-matches. This same chunk list serves both the retriever, when
-retrieval fires, and as the substrate for the repository symbol
-table consulted by the static gate. The symbol table is constructed
-afresh for each instance, pooling this instance's chunks with those
-shipped for any other instance of the same repository. BM25 is not
-re-run at inference.
+matches. \new{This chunk list is consumed only by the BM25 retriever, when
+retrieval fires; BM25 is not re-run at inference. The static-analysis gate does
+not use these chunks --- it resolves identifiers against the in-file context
+$X$ alone.}
 
 As a secondary surface we evaluate on \rev{the \emph{function} split of}
 RepoEval~\cite{zhang2023repocoder}, \rev{which contains 455 multi-line
 function-body completion instances} drawn from the 8 Python repositories.
 \rev{(We focus on function-level completion rather than the line/API splits
 because multi-line generation is where structural hallucinations have room to
-appear; see Section~\ref{sec:dataset}.)} Rather than shipping a pre-retrieved chunk list per instance, as CrossCodeEval does, RepoEval ships the upstream repositories on disk in full. Thus, BM25 is run at inference time with 20-line sliding windows at stride 10 computed live from the source files, with the top ten matches returned per query. The symbol table consulted by our static-analysis gate is built afresh for each instance, immediately after the runner loads every Python file in the target repository into the per-instance file map, and therefore covers the full repository rather than a BM25-selected slice. We adopt these settings unchanged so our reimplementation of the CARD baseline remains directly comparable to its published numbers~\cite{zhang2024card}.
+appear; see Section~\ref{sec:dataset}.)} Rather than shipping a pre-retrieved chunk list per instance, as CrossCodeEval does, RepoEval ships the upstream repositories on disk in full. Thus, BM25 is run at inference time with 20-line sliding windows at stride 10 computed live from the source files, with the top ten matches returned per query. \new{The repository's Python files are loaded only to drive this live BM25 retrieval; as on CrossCodeEval, the static-analysis gate consults only the in-file context $X$, not a repository-wide symbol table.} We adopt these settings unchanged so our reimplementation of the CARD baseline remains directly comparable to its published numbers~\cite{zhang2024card}.
 
 \rev{To stress-test the models on longer, more hallucination-prone targets, we
 additionally evaluate on \textbf{CrossCodeLongEval}~\cite{wu2024repoformer}, the
@@ -257,22 +260,36 @@ presented together in Section~\ref{sec:dataset}.}
 
 \subsection{Static-Analysis Gate}
 \label{sec:analyzer}
-\rev{The static gate targets a single, dominant structural hallucination: a use of
-an identifier that is not defined anywhere visible at the hole. We parse
-$\hat{y}_0$ and collect the identifiers that appear in \emph{significant
-positions} --- a call target, an attribute receiver, a subscript value, a class
-base, a bare decorator, an exception type, or a \texttt{raise} target --- the
-positions where the identifier must denote a real, bound object for the code to
-run (an out-of-scope name in, say, a docstring or comment is harmless and
-ignored). The gate fires if any such identifier is not resolvable in the lexical
-scope of the current file: it is not a Python builtin, not imported, and not
-bound by a preceding definition, assignment, parameter, comprehension, or
-\texttt{with}/\texttt{except} alias in $X_{\text{left}}$/$X_{\text{right}}$. This
-is purely a scope/resolvability check and needs no repository symbol table. In
-practice we realise it with pyflakes' undefined-name analysis (F821) over the
-reconstructed file, which gives a binding-complete, false-positive-resistant
-implementation of exactly this signal and is what drives every cascade result we
-report.}
+\new{The static gate asks one question of the zero-shot completion $\hat{y}_0$:
+does it use any identifier that is not defined anywhere in the file being edited?
+A confident call to a helper that exists nowhere is exactly the structural
+hallucination the confidence gate cannot see. We answer the question with the
+\textbf{pyflakes} static checker~\footnote{\texttt{github.com/PyCQA/pyflakes}}
+rather than a hand-written analyzer, and the procedure is deliberately simple:}
+
+\new{\textbf{(1) Reconstruct the file.} We splice the completion back into its
+context, forming $X_{\text{left}} + \hat{y}_0 + X_{\text{right}}$, and record the
+line span that $\hat{y}_0$ occupies. \textbf{(2) Run pyflakes.} pyflakes resolves
+every name against the file's own bindings --- imports, function/class
+definitions, assignments, parameters, comprehension variables,
+\texttt{with}/\texttt{except} targets, the walrus operator, and so on --- using a
+complete lexical binding model, ignores names that appear inside strings or
+comments, and emits an \emph{undefined name} report (code F821) for each use of a
+name that nothing in the file binds. \textbf{(3) Restrict and decide.} We keep
+only the undefined-name reports that fall on $\hat{y}_0$'s own lines (discarding
+any caused by the surrounding context) and \emph{fire} the gate --- triggering
+retrieval --- if at least one remains.}
+
+\new{The check is purely in-file and resolution-only: it consults the imports and
+definitions already present in $X$, needs \emph{no} repository-wide symbol table
+and \emph{no} code execution, and runs in milliseconds. Two properties matter for
+soundness. First, because pyflakes uses a full binding model it does not
+false-positive on legitimate bindings (e.g.\ a match capture or a \texttt{with
+\dots\ as} alias) that a positional heuristic would miss. Second, if the
+reconstructed file fails to parse, the gate \emph{abstains} (it does not fire), so
+a malformed completion can never manufacture a spurious trigger. This pyflakes
+gate --- not a multi-check analyzer --- is what produces every cascade ($C4$)
+decision and every hallucination number we report (Section~\ref{sec:results}).}
 
 \subsection{Datasets}
 \label{sec:dataset}
@@ -680,11 +697,11 @@ sweeps any gate over the budget axis are released to support this.
 
 \subsection{Future Work}
 \label{sec:future}
-Several directions follow directly. First, \textbf{richer structural checks}: the
-current gate flags an out-of-scope identifier (a scope/resolvability check);
-extending it with signature/arity and import-origin checks could catch rarer but
-higher-confidence structural errors that a pure scope check misses, at the cost of
-consulting the cross-file symbol table. Second, \textbf{repair instead
+Several directions follow directly. First, \new{\textbf{bidirectional gating}: the
+static gate only \emph{adds} retrieval to CARD's skip decisions; a completion that
+resolves cleanly is only weak evidence of correctness, but combined with further
+training-free structural signals it might also be used to \emph{suppress}
+unnecessary retrievals, tightening the cost side of the trade-off.} Second, \textbf{repair instead
 of retrieve}: the static analyzer already localises the offending identifier, so a
 cheaper action than full retrieval may be to constrain or correct that token.
 Third, \textbf{better function-level critique labels}: Repoformer notes that
@@ -701,9 +718,10 @@ and modularity vary across projects~\cite{zhang2023repocoder}.
 functional correctness; we do not run tests (pass@k), so a ``correct'' completion
 may still be semantically wrong, and vice versa. Our hallucination metric is a
 static proxy: pyflakes cannot resolve dynamically-created or star-imported names,
-which could flag a valid identifier as undefined; we mitigate this by restricting
-the gate to significant positions and by computing the signal on the reconstructed
-file (which contains the in-file imports and definitions). There is a partial
+which could flag a valid identifier as undefined; \new{we mitigate this with
+pyflakes' complete binding model (which ignores names in strings and comments and
+recognises every standard binding form) and by computing the signal on the
+reconstructed file, which contains the in-file imports and definitions}. There is a partial
 \emph{circularity}: the cascade's trigger and the $h_{A4B2}$ metric both rest on
 undefined-name analysis, so some of the measured reduction is structural by
 construction; we address this by also reporting the independent absent-from-gold
