@@ -338,8 +338,10 @@ def _batched_prompt(config: str, inst: Instance, model_family: str, top_k: int) 
         return build_fim_prompt(
             inst.x_left, inst.x_right, retrieved=None, model_family=model_family
         )
-    # C2_always_retrieve
-    retriever = BM25Retriever(inst.repo_files)
+    # C2_always_retrieve. exclude_file keeps the corpus cross-file only — the
+    # loaders put the (gold-containing) current file into repo_files for the
+    # symbol-table consumers, and it must never be retrievable.
+    retriever = BM25Retriever(inst.repo_files, exclude_file=inst.target_file)
     chunks = retriever.retrieve(make_query(inst.x_left), top_k=top_k)
     return build_fim_prompt(
         inst.x_left, inst.x_right, retrieved=chunks, model_family=model_family
@@ -481,7 +483,7 @@ def run_experiment(
 
     with jsonlines.open(output_path, "w") as writer:
         for inst in iterator:
-            retriever = BM25Retriever(inst.repo_files)
+            retriever = BM25Retriever(inst.repo_files, exclude_file=inst.target_file)
             # Symbol table only built for configs that consult the static gate;
             # None otherwise (the sweep computes hallucination post-hoc).
             analyzer = make_analyzer(inst) if make_analyzer else None
