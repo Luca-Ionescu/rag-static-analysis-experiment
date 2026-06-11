@@ -35,19 +35,38 @@ def make_query(x_left: str, n_lines: int = 20) -> str:
     return "\n".join(lines[-n_lines:])
 
 
+def _same_file(a: str, b: str) -> bool:
+    """Path equality robust to repo-prefix differences (RepoEval keys are
+    repo-relative while ``Instance.target_file`` includes the repo dir)."""
+    if not a or not b:
+        return False
+    return a == b or a.endswith("/" + b) or b.endswith("/" + a)
+
+
 class BM25Retriever:
     def __init__(
         self,
         repo_files: dict[str, str],
         chunk_size: int = 20,
         stride: int = 10,
+        exclude_file: str | None = None,
     ):
+        """``exclude_file`` drops the completion's own file from the corpus.
+
+        The retrieval corpus must be cross-file only: the loaders place the
+        (gold-containing) current file into ``repo_files`` for other consumers,
+        and without this exclusion the window overlapping the completion hole
+        ranks at/near the top for almost every query (the query IS the lines
+        just above the hole), leaking the ground truth into the prompt.
+        """
         if chunk_size <= 0 or stride <= 0:
             raise ValueError("chunk_size and stride must be positive")
         self.chunk_size = chunk_size
         self.stride = stride
         self.chunks: list[dict] = []
         for path, content in repo_files.items():
+            if exclude_file is not None and _same_file(path, exclude_file):
+                continue
             lines = content.splitlines()
             if not lines:
                 continue
