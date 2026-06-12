@@ -91,11 +91,12 @@ and multi-line block (CrossCodeLongEval) completion with
 three code LMs (Qwen2.5-Coder-0.5B/1.5B and CodeLlama-7B), sweeping the retrieval
 budget end to end. Across all twelve (evaluation dataset $\times$ model) settings the
 static gate cuts the rate of \ugr{\emph{hallucinated identifiers}} (names absent from the
-ground truth that also resolve nowhere) by $3$--$11\times$ over CARD at a
-matched, single-digit-percent retrieval budget, while never lowering edit
-similarity. We further
-find that always-retrieving does \emph{not} reduce invented identifiers. It
-sometimes increases them\ugr{,} so the structural signal addresses a failure mode
+ground truth that also resolve nowhere) \ugr{by $2$--$8\times$} over CARD at a
+matched, single-digit-percent retrieval budget, \ugr{without sacrificing edit
+similarity}. We further
+find that always-retrieving does \emph{not} reduce invented identifiers\ugr{:
+in our setup it \emph{increases} them in every single setting, while improving
+accuracy only modestly ---} so the structural signal addresses a failure mode
 that neither raw retrieval nor confidence gating handles. We release code,
 the per-instance results, and a reproducible evaluation harness.}
 \end{abstract}
@@ -580,77 +581,83 @@ trade-offs over the full threshold sweep.
 \caption{Endpoints: C1 (never retrieve) vs.\ C2 (always retrieve), headline
 (truncated) scoring. ES/EM/idF1 higher is better; $h_{A4B2}$ (invented-identifier
 rate) lower is better; ms is per-instance latency under batched inference. Note
-that C2 lifts accuracy sharply everywhere, yet $h_{A4B2}$ barely moves and often
-\emph{rises} (e.g.\ RepoEval/CCLE-function at 7B): retrieval does not fix
-invented identifiers.}
+that \ugr{C2 lifts accuracy only modestly, while $h_{A4B2}$ \emph{rises} under
+C2 in every setting: retrieval does not fix
+invented identifiers --- it amplifies them.}}
 \label{tab:endpoints}
 \centering\footnotesize
 \input{tables/table_endpoints}
 \end{table*}
 
-\subsection{RQ1: Retrieval is broadly beneficial, but not uniformly}
-The C1$\rightarrow$C2 columns of Table~\ref{tab:endpoints} show that adding
-cross-file context lifts edit similarity substantially on every surface and model
---- by $+0.21$ to $+0.46$ ES, with exact match rising several-fold (e.g.\
-CCLong-function 1.5B: EM $0.08\rightarrow0.57$). The no-retrieve baselines are thus
-``correctly low'': the models are knowledge-limited, not broken, which we confirmed
-by manual inspection (the C1 outputs are fluent but reference the wrong, locally
-plausible names). Figure~\ref{fig:delta} decomposes this per instance: on the
-function task, always-retrieve \emph{helps} 77--80\% of instances, leaves
-$\sim$13\% unchanged, and \emph{hurts} 6--11\%. So in our small-model,
-cross-file-dependent setting retrieval is more broadly useful than the
-$\sim$20\%-helpful regime reported for larger models by
-Repoformer~\cite{wu2024repoformer} --- but a non-trivial slice is still wasted or
-harmed, which is precisely the slice an adaptive policy should reclaim. Retrieval
-is therefore worth gating, motivating RQ2--RQ4.
+\subsection{RQ1: Retrieval is beneficial on average, but far from uniformly}
+\ugr{The C1$\rightarrow$C2 columns of Table~\ref{tab:endpoints} show that adding
+cross-file context helps on every surface and model, but \emph{modestly}: edit
+similarity rises by $+0.03$ to $+0.08$ and exact match by a few points (e.g.\
+RepoEval 1.5B: EM $0.06\rightarrow0.13$). The no-retrieve baselines are
+``correctly low'' --- the models are knowledge-limited, not broken, which we
+confirmed by manual inspection (C1 outputs are fluent but reference wrong,
+locally plausible names) --- yet feeding the missing context back as commented
+prompt text recovers only part of that headroom for these base code LMs.
+Figure~\ref{fig:delta} decomposes the effect per instance: always-retrieve
+\emph{helps} only 20--41\% of instances, leaves 35--66\% essentially unchanged,
+and actively \emph{hurts} 14--24\%. This matches the selective picture reported
+by Repoformer~\cite{wu2024repoformer}, where a large fraction of retrievals do
+not improve the prediction: most of the always-retrieve budget is spent on
+instances it cannot help, and a sizeable slice is harmed by it --- precisely
+what an adaptive policy should reclaim. Retrieval is therefore worth gating,
+motivating RQ2--RQ4.}
 
-\sugg{\noindent\textbf{Answer (RQ1).} Cross-file retrieval helps substantially
-\emph{on average} on every surface and model, but not uniformly per instance: a
-non-trivial share of completions is left unchanged or actively degraded, so an
-always-retrieve policy wastes part of its budget --- selective retrieval is
-justified.}
+\sugg{\noindent\textbf{Answer (RQ1).} Cross-file retrieval helps \emph{on
+average} on every surface and model, but only a minority of instances
+(20--41\%) actually benefit; most are unchanged and up to a quarter are
+degraded, so an always-retrieve policy wastes most of its budget ---
+selective retrieval is justified.}
 
 \begin{figure*}[tb]
 \centering
 \includegraphics[width=\textwidth]{figures/fig_delta_es_hist.pdf}
 \caption{Per-instance effect of always-retrieve (1.5B): $\Delta$ES $=$ ES(C2)$-$ES(C1).
-Retrieval is broadly beneficial on the function/chunk tasks, but a non-trivial
-fraction of instances is unchanged or degraded --- the budget should be spent
-selectively rather than uniformly (RQ1).}
+\ugr{Only a minority of instances benefit from retrieval; most are unchanged and
+a sizeable fraction is degraded --- the budget should be spent selectively
+rather than uniformly (RQ1).}}
 \label{fig:delta}
 \end{figure*}
 
-\subsection{RQ2: CARD trades cost for accuracy well, but leaves a structural gap}
-Figure~\ref{fig:cost} traces accuracy against retrieval budget as
+\subsection{RQ2: CARD trades cost for accuracy efficiently, but leaves a structural gap}
+\ugr{Figure~\ref{fig:cost} traces accuracy against retrieval budget as
 $T_{\text{RAG}}$ is swept. The cascade (and CARD, which nearly coincides on ES)
-recovers most of the C2 accuracy well before reaching a 100\% retrieval rate: the
-curves rises steeply and then flattens, so a confidence gate buys most of
-retrieval's benefit at a fraction of its cost --- reproducing CARD's and
-Repoformer's central efficiency finding~\cite{zhang2024card,wu2024repoformer} on
-our benchmarks and models. Figure~\ref{fig:latency} shows the same trade-off in
-wall-clock terms: edit similarity and per-instance latency both rise with
-$T_{\text{RAG}}$ and plateau together. \emph{However}, the confidence gate is blind
-to one thing: the $h_{A4B2}$ columns of Table~\ref{tab:endpoints} show that
-always-retrieving does not reduce invented identifiers --- on the function tasks
-at 7B it \emph{increases} them (RepoEval nearly triples, $0.018\rightarrow0.051$;
-CCLong $0.042\rightarrow0.054$), because retrieval lets the model write more,
-longer code and thus emit more unresolvable names. A policy that only optimizes confidence/ES
-therefore leaves a structural failure mode untouched. This is the gap our static
-gate targets.
+recovers the --- modest --- C1$\rightarrow$C2 accuracy gain well before reaching
+a 100\% retrieval rate, so a confidence gate buys retrieval's benefit at a
+fraction of its cost: the efficiency claim of CARD and
+Repoformer~\cite{zhang2024card,wu2024repoformer} reproduces on our benchmarks
+and models, even though the absolute ceiling is low in our base-model FIM
+setup. Figure~\ref{fig:latency} shows the same trade-off in wall-clock terms:
+edit similarity and per-instance latency rise with $T_{\text{RAG}}$ together.
+\emph{However}, the confidence gate is blind to one thing: the $h_{A4B2}$
+columns of Table~\ref{tab:endpoints} show that always-retrieving
+\emph{increases} invented identifiers in every one of the twelve settings
+(e.g.\ RepoEval 7B $0.018\rightarrow0.031$; CCLong-function 7B
+$0.042\rightarrow0.067$; CCLong-function 1.5B $0.034\rightarrow0.061$) ---
+retrieved context invites the model to write more, and more adventurous, code,
+emitting more unresolvable names. A policy that only optimizes confidence/ES
+therefore leaves a structural failure mode untouched --- and paying for
+\emph{more} retrieval makes it worse, not better. This is the gap our static
+gate targets.}
 
-\sugg{\noindent\textbf{Answer (RQ2).} A small retrieval budget buys most of
-always-retrieve's accuracy --- the confidence gate trades cost for accuracy
-well --- but the gate is blind to structural validity: invented identifiers
-persist, and can even increase, under retrieval, leaving exactly the failure
-mode a structural signal can address.}
+\sugg{\noindent\textbf{Answer (RQ2).} A small retrieval budget captures the
+(modest) accuracy gain of always-retrieving --- the confidence gate trades cost
+for accuracy efficiently --- but it is blind to structural validity: invented
+identifiers \emph{increase} under retrieval in every setting, leaving exactly
+the failure mode a structural signal can address.}
 
 \begin{figure*}[tb]
 \centering
 \includegraphics[width=\textwidth]{figures/fig_cost_accuracy.pdf}
 \caption{Accuracy--cost trade-off (RQ2). Edit similarity vs.\ retrieval rate as
-$T_{\text{RAG}}$ is swept (C4 cascade); $\bullet$ = C1, $\blacksquare$ = C2. The
-selective frontier reaches near-C2 accuracy well below a 100\% retrieval budget,
-for all three models and all four surfaces.}
+$T_{\text{RAG}}$ is swept (C4 cascade); $\bullet$ = C1, $\blacksquare$ = C2.
+\ugr{The C1$\rightarrow$C2 gain is modest in our setup, and the selective
+frontier captures it well below a 100\% retrieval budget, for all three models
+and all four surfaces.}}
 \label{fig:cost}
 \end{figure*}
 
@@ -669,11 +676,15 @@ Table~\ref{tab:cascade} compares CARD (C3) and the cascade (C4) at a low
 ($T_{\text{RAG}}=0.05$, where CARD is most conservative and retrieves almost
 nothing). Threshold and budget are two views of the same knob: the threshold is
 what we set, and the realised retrieval rate --- the budget actually spent ---
-is what it produces.} Adding the static-analysis gate retrieves an extra $2$--$9\%$ of instances --- precisely those whose confident zero-shot output references an unresolvable name --- and cuts the invented-identifier rate by \textbf{$3.6\times$ to $11.3\times$} (to zero on RepoEval-1.5B). The effect is consistent across all
-twelve (benchmark $\times$ model) cells. Figure~\ref{fig:hall} shows it holds along
-the entire budget axis: at any matched retrieval rate the cascade (solid) sits
-below CARD (dashed) in invented-identifier rate, the two converging only as both
-approach always-retrieve (where there is nothing left to select). Figure~\ref{fig:cascade} summarises the headline reduction as paired bars. Because the trigger and the
+is what it produces.} Adding the static-analysis gate retrieves an extra $2$--$9\%$ of instances --- precisely those whose confident zero-shot output references an unresolvable name --- and cuts the invented-identifier rate \ugr{by \textbf{$1.9\times$ to $8\times$} (e.g.\ RepoEval-7B $0.018\rightarrow0.002$, an $8\times$ drop)}. The effect is consistent across all
+twelve (benchmark $\times$ model) cells. \ugr{Figure~\ref{fig:hall} places this
+on the budget axis: throughout the low-budget regime where a selective policy
+actually operates, the cascade (solid) sits below CARD (dashed) at a matched
+retrieval rate. As the budget grows the two converge --- and can cross ---
+because both approach always-retrieve, whose own hallucination rate is
+\emph{higher} than no-retrieve's (RQ2): once a policy retrieves almost
+everywhere, what dominates is no longer \emph{which} instances are selected but
+the fact that retrieval itself inflates invented identifiers.} Figure~\ref{fig:cascade} summarises the headline reduction as paired bars. Because the trigger and the
 $h_{A4B2}$ metric both rest on undefined-name analysis, part of this drop is
 structural by construction; we therefore also verified that the looser, fully
 independent $h_{A4}$ (absent-from-gold) moves in the same direction, and that edit
@@ -698,10 +709,11 @@ similarity is non-decreasing. ``$\rightarrow$0'' denotes a drop to zero.}
 \begin{figure*}[tb]
 \centering
 \includegraphics[width=\textwidth]{figures/fig_hallucination.pdf}
-\caption{Invented-identifier rate vs.\ retrieval budget (RQ3). At a matched budget
-the cascade (C4, solid) lies below CARD (C3, dashed) for every model; the gap is
-largest at the low budgets where a selective policy operates, and closes as both
-approach always-retrieve.}
+\caption{Invented-identifier rate vs.\ retrieval budget (RQ3). \ugr{In the
+low-budget regime where a selective policy operates, the cascade (C4, solid)
+lies below CARD (C3, dashed) at a matched budget for every model; at high
+budgets both approach always-retrieve --- whose hallucination rate exceeds
+no-retrieve's --- so the curves rise and converge (RQ2).}}
 \label{fig:hall}
 \end{figure*}
 
@@ -718,10 +730,12 @@ function tasks, exactly as hypothesised.}
 \subsection{RQ4: The gate is free and scales as hypothesised} \label{RQ4}
 \textbf{No accuracy regression.} The cascade obeys an \emph{asymmetry guarantee} by
 construction --- it only \emph{adds} retrieval to CARD's skip decisions --- and the
-data confirm it empirically: at every one of the 19 thresholds, in every cell, C4
-retrieval rate $\geq$ C3, C4 ES $\geq$ C3, and C4 $h_{A4B2}\leq$ C3
-(Table~\ref{tab:cascade} shows ES ticking \emph{up}, e.g.\ CCLong-function 0.5B
-$0.397\rightarrow0.424$). The hallucination reduction is thus obtained at no cost
+data confirm it empirically: \ugr{across all $228$ (threshold $\times$ setting)
+points, C4 retrieval rate $\geq$ C3 and C4 $h_{A4B2}\leq$ C3 everywhere, and C4
+ES $\geq$ C3 in $226$ of $228$ points (the two exceptions are mean-ES dips of
+$10^{-4}$, below reporting precision)}
+(Table~\ref{tab:cascade} shows ES ticking \emph{up} slightly, \ugr{e.g.\
+CCLong-function 0.5B $0.397\rightarrow0.400$}). The hallucination reduction is thus obtained at no cost
 to accuracy and only single-digit-percent extra retrieval (hence near-C1 latency).
 
 \textbf{Scaling.} Accuracy rises monotonically with model size on every surface
@@ -734,15 +748,15 @@ is largest in absolute terms where hallucination is largest (smaller models,
 function tasks) and is near-inert on the single-line control
 (Fig.~\ref{fig:cascade}), as intended.
 
-\sugg{\noindent\textbf{Answer (RQ4).} The gate is effectively free: by
-construction and empirically it never lowers edit similarity at any threshold,
-adds only single-digit-percent retrieval, and its benefit concentrates exactly
+\sugg{\noindent\textbf{Answer (RQ4).} The gate is effectively free: it adds
+only single-digit-percent retrieval and does not sacrifice edit similarity at
+any operating point, and its benefit concentrates exactly
 where hallucination lives --- smaller models and function-length targets ---
 while staying near-inert on the single-line control.}
 
 \textbf{Truncation matters.} Table~\ref{tab:dual} shows the headline (truncated)
-ES is far above the raw ES on every multi-line surface (e.g.\ 7B CCLong-function C2
-$0.839$ truncated vs.\ $0.426$ raw): without body/line truncation, over-generation
+ES is far above the raw ES on every multi-line surface \ugr{(e.g.\ 7B CCLong-function C2
+$0.529$ truncated vs.\ $0.333$ raw)}: without body/line truncation, over-generation
 past the target span dominates the score. This both validates the truncation step
 and underlines why the structural signal must be computed on the \emph{complete}
 output rather than the truncated one (Section~\ref{sec:metrics}).
@@ -772,9 +786,11 @@ same zero-shot output CARD already produced and asks an orthogonal question
 
 \textbf{Retrieval is not a hallucination cure.} Repoformer~\cite{wu2024repoformer}
 showed that always-retrieving is wasteful for \emph{accuracy} --- up to 80\% of
-retrievals do not help. We add a sharper, complementary observation: always-retrieving
-does not fix \emph{structural} hallucination and can worsen it
-(Table~\ref{tab:endpoints}), because more context invites more (and longer)
+retrievals do not help\ugr{, a proportion we reproduce
+(Fig.~\ref{fig:delta})}. We add a sharper, complementary observation: \ugr{in
+our setup always-retrieving consistently \emph{worsened} structural
+hallucination --- $h_{A4B2}$ rose under C2 in all twelve settings
+(Table~\ref{tab:endpoints}) ---} because more context invites more (and longer)
 generation, and thus more opportunities to invent names. This reframes selective
 retrieval: the goal is not only to skip unhelpful retrievals but to \emph{spend the
 budget on the structurally broken outputs}, which is exactly what the static gate
@@ -856,9 +872,13 @@ retrieved chunk originates from the target file on any benchmark.} Generation is
 are reproducible but reflect a single decode. Latencies are measured under vLLM
 continuous batching and are therefore throughput-amortised; we use them only for
 within-benchmark, same-hardware comparison and rely on retrieval rate as the
-hardware-independent cost proxy. We report point estimates over large test sets
-(up to 5{,}000 instances); the harness supports paired McNemar and bootstrap tests,
-which we leave to a camera-ready version.
+hardware-independent cost proxy. \sugg{We complement the point estimates with a
+paired exact McNemar test on the per-instance invented-identifier flags of CARD
+vs.\ the cascade at $T_{\text{RAG}}=0.05$: the reduction is statistically
+significant in all twelve settings ($p<10^{-5}$ in eleven of them; $p=0.016$ on
+RepoEval-7B, where only eight flagged instances remain to begin with), and in
+nine of the twelve the cascade introduces \emph{zero} newly-flagged instances
+--- it only removes them.}
 
 \textbf{External.} Findings cover three code LMs (0.5B--7B), Python only, and four
 benchmarks; larger models hallucinate less (Table~\ref{tab:endpoints}), so the
@@ -875,10 +895,12 @@ repository. Our remedy is a training-free static-analysis gate that runs only wh
 the confidence gate decides to skip, parses the zero-shot completion, and triggers
 retrieval when it finds an out-of-scope identifier. Evaluated over four Python
 surfaces and three code LMs (13{,}120 instances), with the retrieval budget swept
-end to end, the cascade cuts the invented-identifier rate by $3.6$--$11\times$ over
-CARD at a matched, single-digit-percent retrieval budget, never lowers edit
-similarity (an asymmetry guarantee that holds at every threshold), and addresses a
-failure mode that always-retrieving does not --- and sometimes worsens. The effect
+end to end, the cascade cuts the invented-identifier rate \ugr{by $2$--$8\times$} over
+CARD at a matched, single-digit-percent retrieval budget, \ugr{does not
+sacrifice edit similarity at any operating point (the asymmetry analysis of
+Section~\ref{RQ4})}, and addresses a
+failure mode that always-retrieving does not \ugr{--- and, in our experiments,
+consistently worsens}. The effect
 is largest where it should be (smaller models, longer function targets) and
 near-inert on easy single-line completions. Beyond the specific gate, the study
 argues that selective retrieval should weigh \emph{structural} evidence alongside
