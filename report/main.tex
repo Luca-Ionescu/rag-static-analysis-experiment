@@ -11,7 +11,7 @@
 \usepackage{textcomp}
 \usepackage{xcolor}
 \usepackage{capt-of}
-% \usepackage{minted}  % disabled: needs -shell-escape + Pygments; unused in this draft
+% \usepackage{minted} % disabled: needs -shell-escape + Pygments; unused in this draft
 \usepackage[ruled,linesnumbered]{algorithm2e}
 \usepackage{import}
 \usepackage{tikz}
@@ -38,9 +38,17 @@
 % method/report were aligned with the final code: a single pyflakes-based static
 % analyzer (no three-tier analyzer, no repository symbol table for the gate).
 \newcommand{\new}[1]{{\color{blue}#1}}
+% \ugr{...} (dark green) marks the updates made in response to the co-author
+% review round (answers to the inline questions / clarity fixes).
+\definecolor{revgreen}{RGB}{0,128,0}
+\newcommand{\ugr}[1]{{\color{revgreen}#1}}
+% \sugg{...} (violet) marks additional improvements proposed by the assistant in
+% the same round, beyond the explicit review questions.
+\definecolor{suggviolet}{RGB}{143,0,255}
+\newcommand{\sugg}[1]{{\color{suggviolet}#1}}
 
 
-% I suggest naming our tools, approaches, etc golablly here. 
+% I suggest naming our tools, approaches, etc golablly here.
 % It makes it easier to change the names or numbers in one go
 \newcommand{\approach}[0]{MyApproachName}
 \newcommand{\usersNum}[0]{100}
@@ -73,22 +81,21 @@ email@tudelft.nl}
 \rev{Retrieval-augmented generation (RAG) improves repository-level code
 completion, but retrieving on every request is wasteful and can even degrade
 output. Adaptive methods such as CARD gate retrieval on the model's token-level
-confidence; this signal, however, cannot tell a syntactically fluent line from
-one that references identifiers that do not exist in the repository. We add a
+confidence; this signal, however, cannot account for hallucinated identifiers that do not exist in the repository. We add a
 lightweight, training-free \emph{static-analysis gate} on top of CARD's
 confidence gate: when CARD decides to skip retrieval, we parse the zero-shot
 completion and trigger retrieval if it uses an out-of-scope (unresolvable)
 identifier. We evaluate the resulting cascade on four Python benchmarks spanning
 single-line (CrossCodeEval), multi-line function (RepoEval, CrossCodeLongEval),
-and fixed-block (CrossCodeLongEval) completion --- 13{,}120 instances --- with
+and multi-line block (CrossCodeLongEval) completion with
 three code LMs (Qwen2.5-Coder-0.5B/1.5B and CodeLlama-7B), sweeping the retrieval
-budget end to end. Across all twelve (benchmark $\times$ model) settings the
-static gate cuts the rate of \emph{invented identifiers} (names absent from the
-ground truth that also resolve nowhere) by $3.6$--$11\times$ over CARD at a
+budget end to end. Across all twelve (evaluation dataset $\times$ model) settings the
+static gate cuts the rate of \ugr{\emph{hallucinated identifiers}} (names absent from the
+ground truth that also resolve nowhere) by $3$--$11\times$ over CARD at a
 matched, single-digit-percent retrieval budget, while never lowering edit
-similarity (an asymmetry guarantee that holds at every threshold). We further
-find that always-retrieving does \emph{not} reduce invented identifiers --- it
-sometimes increases them --- so the structural signal addresses a failure mode
+similarity. We further
+find that always-retrieving does \emph{not} reduce invented identifiers. It
+sometimes increases them\ugr{,} so the structural signal addresses a failure mode
 that neither raw retrieval nor confidence gating handles. We release code,
 the per-instance results, and a reproducible evaluation harness.}
 \end{abstract}
@@ -99,7 +106,12 @@ language models, static analysis, hallucination, repository-level context}
 \end{IEEEkeywords}
 
 \section{Introduction}
-Repository level completion requires assistance from beyond the current file, as utility functions, shared variables and imported types can be defined elsewhere in the project. \textbf{Retrieval Augmented Generation} \cite{lewis2021retrievalaugmentedgenerationknowledgeintensivenlp} addresses this file by augmenting the model's prompt with cross-file-relevant snippets retrieved from the repository before generation. However, retrieval doesn't always help due to pipelines either retrieving on every instance unconditionally and do not taking into account the local context or adaptive approaches relying too much on model's confidence. Therefore, current approaches such as \textbf{CARD} \cite{zhang2024card} share a common issue: token-level confidence not distinguishing a synthactically correct line from one whose identifiers do not appear in the repository, not being able to detect structural hallucinations.  To address this gap,  we augment current models' confidence gate with a static analysis gate, which checks whether \new{the identifiers the completion uses are defined in the scope of the current file being edited (we implement this check with the \textbf{pyflakes} linter)}. The cascade pipeline operates in 3 stages: zero-shot generation, CARD's confidence gate, and our free-training static analysis gate. The results of our experiments suggest that token-level confidence alone is insufficient and inefficient and that lightweight structural checks can help in avoiding structural hallucinations. Our main contribution consists of  the static analysis gate approach which detects out-of-scope identifiers hallucinations without the need for fine tuning the model and the pipeline's evaluation on the same settings as other \textbf{RAG} approaches such as \textbf{CARD} \cite{zhang2024card}, enabling a reproducible evaluation and comparison.
+\ugr{Modern software rarely lives in a single file: a typical edit depends on
+helpers, types, and constants declared elsewhere in the project.
+\emph{Repository-level} code completion mirrors this reality --- the model
+completes code inside a real project rather than an isolated snippet --- and is
+therefore the setting closest to how completion tools are actually used.}
+Code completion \ugr{thus} requires assistance from beyond the current file, as utility functions, shared variables and imported types can be defined elsewhere in the project. \textbf{Retrieval Augmented Generation} \cite{lewis2021retrievalaugmentedgenerationknowledgeintensivenlp} addresses this \ugr{need} by augmenting the model's prompt with cross-file-relevant snippets retrieved from the repository before generation. However, retrieval doesn't always help due to pipelines either retrieving on every instance unconditionally and not taking into account the local context or adaptive approaches relying too much on model's confidence. Therefore, current approaches such as \textbf{CARD} \cite{zhang2024card} share a common issue: token-level confidence not distinguishing a \ugr{syntactically} correct line from one whose identifiers do not appear in the repository, not being able to detect structural hallucinations.  To address this gap,  we augment current models' confidence gate with a static analysis gate, which checks whether \new{the identifiers the completion uses are defined in the scope of the current file using the \textbf{pyflakes} linter}. The cascade pipeline operates in 3 stages: zero-shot generation, CARD's confidence gate, and our static analysis gate. The results of our experiments suggest that token-level confidence alone is insufficient and that lightweight structural checks can help in avoiding structural hallucinations. Our main contribution consists of  the static analysis gate approach which detects out-of-scope identifiers hallucinations without the need for fine tuning the model.
 \iffalse
 \instruction{The introduction is a crucial part of any paper. A compelling introduction immediately captures the reader's interest and answers the question: ``Why should I read this?" Here is the structure I use for my paper introductions. Feel free to adapt it to your needs or develop your own structure.
 
@@ -126,21 +138,42 @@ Repository level completion requires assistance from beyond the current file, as
 \instruction{Choose a project from the list provided to you.
 Clearly define the chosen task and explain why it intrigues your team (state why should people care about this topic).}
 
+\ugr{\textbf{Task.} Given the code before and after a cursor position in one file
+of a repository (the in-file context $X$), the system must produce the missing
+span --- a line, a fixed block, or an entire function body --- optionally after
+retrieving cross-file context from the rest of the project. We study
+\emph{repository-level} completion rather than isolated-snippet completion
+because it is the realistic deployment setting: in real projects the correct
+completion routinely names helpers, classes, or constants that are defined in
+\emph{other} files, so a model restricted to the current file must either know
+the project from training (it usually cannot --- the benchmarks are curated
+against that) or guess. \textbf{Why care.} Guessing produces a particularly
+damaging failure: code that \emph{looks} right but calls things that do not
+exist, which type-checks the developer's patience rather than the program.
+Retrieval can fix this but is too expensive to run on every keystroke, so the
+practical question --- and the core of this project --- is \emph{when} retrieval
+is worth its cost, and on what evidence that decision should be made.}
+
 \subsection{Research Questions}
 \instruction{Here it should be a story of RQs and how they relate and why we define them, rather than listing them. furthermore, we will have subsections for evaluation metrics, datasets (for both training testing), baselines, and configuration details. note that if dataset creation is an important step of your work, you can move it to the approach section.}
 
 \rev{Our study is organised around four questions that build on one another. We
 first ask whether retrieval is even worth gating: \textbf{RQ1 --- Is cross-file
-retrieval uniformly beneficial, or selective?} If retrieval helped every
+retrieval uniformly beneficial, or selective?} \ugr{If retrieval helped every
 instance, an always-retrieve policy would suffice and adaptivity would be
-pointless; if it is selective (or harmful on a subset), a gate is warranted. Given
-a gate is justified, we examine the state-of-the-art confidence gate:
-\textbf{RQ2 --- How well does CARD's token-confidence gate trade retrieval budget
-for accuracy, and what failure mode does it leave?} We hypothesise that confidence
+pointless from an accuracy perspective; if it is unhelpful or harmful on a
+subset, a gate is needed. Once a gate is justified}, we examine the
+state-of-the-art confidence gate: \ugr{\textbf{RQ2 --- When CARD's confidence
+threshold is varied, how much accuracy does each percent of retrieval buy, and
+which errors still slip through when the model is confident?} The threshold
+controls the \emph{retrieval budget} (the fraction of instances on which
+retrieval is performed and paid for), so RQ2 asks two things: how efficiently
+the confidence gate converts budget into accuracy, and what kind of mistakes
+remain in the completions it confidently keeps.} We hypothesise that confidence
 correlates with accuracy but is blind to structural validity, letting confident
 yet unresolvable completions through. This motivates our contribution:
 \textbf{RQ3 --- Does a training-free static-analysis gate suppress the
-invented-identifier hallucinations that the confidence gate misses, and at what
+hallucinated identifier that the confidence gate misses, and at what
 additional retrieval cost?} Finally, because a gate that improves one metric by
 harming another is not useful, \textbf{RQ4 --- Does the static gate preserve
 accuracy and latency, and how do the effects scale with model size and task
@@ -151,7 +184,7 @@ answer them.}
 
 
 \section{Background and Related Work}
-\instruction{To ensure a comprehensive understanding and position your work in the broader landscape context, it is essential to familiarize yourself with recent advancements in the domain. 
+\instruction{To ensure a comprehensive understanding and position your work in the broader landscape context, it is essential to familiarize yourself with recent advancements in the domain.
 Search for recent work that addresses your specific problem.
 Moreover, research studies that use your proposed model/method and summarise them.
 Use tools like Google Scholar, Semantic Scholar, or DBLP for your search.
@@ -178,22 +211,22 @@ CARD's adaptive-retrieval gate~\cite{zhang2024card} predicts the
 zero-shot output's edit similarity from a 13-dimensional aggregation of
 per-token probabilities and entropies, and skips retrieval whenever this
 prediction exceeds a threshold $T_{\text{RAG}}$. The signal is cheap and
-empirically strong, but it is structurally shallow: token-level
+empirically strong, but it is structurally superficial: token-level
 confidence cannot distinguish a syntactically correct line from one whose
-identifiers do not exist anywhere in the repository. We complement
+identifiers do not exist. We complement
 CARD with a second gate that parses the structure of the
 zero-shot prediction rather than the model's confidence, and triggers
 retrieval whenever \rev{the prediction uses an identifier that cannot be
-resolved in the current file's scope --- the structural hallucination} the
+resolved in the current file's scope, catching the structural hallucination} the
 logit signal missed.
 
-Because their decisions are not symmetric, we compose the two gates by subordination: the static gate runs only when CARD says skip. A static fire is positive evidence of a flagrant structural hallucination, while the absence of a static fire is not positive evidence
-of correctness, only that the prediction violates none of the patterns the gate enumerates.
+Because their decisions are not symmetric, we compose the two gates by subordination: the static gate runs only when CARD skips it. A static fire is positive evidence of a hallucination, while the absence of a static fire is not positive evidence
+of correctness, only that the prediction violates none of the patterns the gate enforces.
 The static gate is therefore well-suited to supplement CARD's skip
-decisions but cannot meaningfully veto its retrieve decisions. It is
-also naturally targeted at the residual failure mode CARD's broad
-signal lets through: confidently-generated outputs that nonetheless
-contain a structural hallucination.
+decisions but cannot meaningfully reject its retrieve decisions. It is
+also targeted at the residual failure mode CARD's
+signal lets through: confidently generated outputs that nonetheless
+contain hallucinations.
 
 \subsection{Pipeline}
 
@@ -205,18 +238,35 @@ produces a prediction $\hat{y}$ in three stages.
 produces $\hat{y}_0 = G(X_{\text{left}}, X_{\text{right}})$ together
 with per-token log-probabilities. We extract CARD's 13-D feature vector
 from the logits and compute $\hat{s}_0 = \text{Estimator}(\cdot)$, as proposed in the original paper.
+\ugr{Concretely, the 13 features are six summary statistics (maximum, minimum,
+mean, standard deviation, product, and geometric mean) over the chosen-token
+\emph{probabilities} of the generated sequence, the same six statistics over the
+per-token \emph{entropies}, plus the generation length --- a fixed-size summary
+of how confident the model was, token by token, while writing $\hat{y}_0$. The
+\emph{estimator} is a small learned regressor (gradient-boosted trees;
+Section~\ref{sec:config}) that maps these 13 numbers to $\hat{s}_0 \in
+[0,1]$, a prediction of the edit similarity the zero-shot completion will
+achieve --- in effect, an instance-level confidence score distilled from
+token-level signals.}
 
 \textbf{Stage 2: CARD gate.} If $\hat{s}_0 < T_{\text{RAG}}$, the model
-is judged uncertain. We retrieve cross-file context with BM25 over
+is classified as uncertain. We retrieve cross-file context with BM25 over
 sliding-window chunks (20-line windows, stride 10, top-$k$) following
 the RepoCoder convention~\cite{zhang2023repocoder}, regenerate, and
 return the retrieved-context prediction.
+\ugr{This same retrieval procedure is used on all four benchmarks; only the
+corpus it ranks differs per benchmark (the benchmark-shipped cross-file
+fragments for CrossCodeEval and CrossCodeLongEval, live windows over the
+repository's other Python files for RepoEval; Section~\ref{sec:data}). Two
+properties hold everywhere: the query is the last 20 lines of
+$X_{\text{left}}$ --- the ground truth is never part of any query --- and the
+corpus is strictly \emph{cross}-file, with the completion's own file excluded,
+so the retrieved context can never contain the reference solution.}
 
 \textbf{Stage 3: static-analysis gate.} If CARD said skip, we
 \new{run pyflakes over $X_{\text{left}}+\hat{y}_0+X_{\text{right}}$ and flag any
-identifier used in $\hat{y}_0$ that is not defined anywhere in the current file
-(Section~\ref{sec:analyzer}). If the check fires}, we retrieve and regenerate
-exactly as in Stage 2. Otherwise we commit $\hat{y}_0$ as the final prediction.
+identifier used in $\hat{y}_0$ that is not defined anywhere in the current file. If the check fires}, we retrieve and regenerate
+exactly as in Stage 2. Otherwise we yield $\hat{y}_0$ as the final prediction.
 
 \subsection{Data}
 \label{sec:data}
@@ -225,29 +275,26 @@ The primary evaluation surface is the Python split of CrossCodeEval~\cite{ding20
 repositories. The benchmark authors selected its source repositories
 to limit training-data overlap with the code language models
 available at the time of its release. Each instance is one JSONL
-record providing the in-file context ($X_{\text{left}}$ from the
-\texttt{prompt} field, $X_{\text{right}}$ from \texttt{right\_context}),
-the held-out completion (the \texttt{groundtruth} field), metadata
-identifying the upstream \texttt{repository} and target \texttt{file},
+record providing the in-file context ($X_{\text{left}}$ and $X_{\text{right}}$),
+the held-out completion (\texttt{groundtruth})\ugr{,}
 and a \emph{cross-file context block} that is the only view of $R$
-available to the BM25 retriever\new{; the static-analysis gate, by contrast, uses
+available to the BM25 retriever\new{. The static-analysis gate, by contrast, uses
 only the in-file context $X$ (Section~\ref{sec:analyzer})}.
 
-We use the \texttt{rg1\_bm25} variant of the dataset because it ships this
-block directly. The cross-file chunk represents a set of 5 pre-retrieved
-passages selected by BM25 from the instance-specific $R$. Each chunk is a contiguous 10-line window of a source file accompanied by its repo-relative path. The benchmark authors pre-tile every file in the upstream project into non-overlapping windows of that size and, for each instance, score those windows
+\ugr{Each CrossCodeEval cross-file block is} a set of 5 pre-retrieved
+passages selected by BM25 from \ugr{the instance's upstream repository $R$}. Each chunk is a contiguous 10-line window of a source file. The benchmark authors pre-tile every file in the upstream project into non-overlapping windows of that size and, for each instance, score those windows
 against the last 10 lines of $X_{\text{left}}$, returning the top
 matches. \new{This chunk list is consumed only by the BM25 retriever, when
-retrieval fires; BM25 is not re-run at inference. The static-analysis gate does
-not use these chunks --- it resolves identifiers against the in-file context
+retrieval fires. The static-analysis gate does
+not use these chunks as it resolves identifiers against the in-file context
 $X$ alone.}
 
 As a secondary surface we evaluate on \rev{the \emph{function} split of}
 RepoEval~\cite{zhang2023repocoder}, \rev{which contains 455 multi-line
 function-body completion instances} drawn from the 8 Python repositories.
-\rev{(We focus on function-level completion rather than the line/API splits
+\rev{We analyze function-level completion
 because multi-line generation is where structural hallucinations have room to
-appear; see Section~\ref{sec:dataset}.)} Rather than shipping a pre-retrieved chunk list per instance, as CrossCodeEval does, RepoEval ships the upstream repositories on disk in full. Thus, BM25 is run at inference time with 20-line sliding windows at stride 10 computed live from the source files, with the top ten matches returned per query. \new{The repository's Python files are loaded only to drive this live BM25 retrieval; as on CrossCodeEval, the static-analysis gate consults only the in-file context $X$, not a repository-wide symbol table.} We adopt these settings unchanged so our reimplementation of the CARD baseline remains directly comparable to its published numbers~\cite{zhang2024card}.
+appear.} Rather than shipping a pre-retrieved chunk list per instance, as CrossCodeEval does, RepoEval ships the upstream repositories on disk in full. Thus, BM25 is run at inference time with 20-line sliding windows at stride 10 computed live from \ugr{every other Python file of the target repository (all of the repository's files except the one being completed)}, with the top ten matches returned per query. \new{The repository's Python files are loaded only to drive this live BM25 retrieval. Similarly to CrossCodeEval, the static-analysis gate consults only the in-file context $X$, not repository-wide information.} We adopt these settings unchanged so our enhancement of the CARD baseline remains directly comparable to its published numbers~\cite{zhang2024card}.
 
 \rev{To stress-test the models on longer, more hallucination-prone targets, we
 additionally evaluate on \textbf{CrossCodeLongEval}~\cite{wu2024repoformer}, the
@@ -258,58 +305,67 @@ left/right in-file context and a retrieved cross-file block, which we use exactl
 as for CrossCodeEval. All four evaluation surfaces and their statistics are
 presented together in Section~\ref{sec:dataset}.}
 
+\ugr{\textbf{Summary: what each benchmark supplies.} All three benchmarks provide,
+per instance, the in-file context $X$ and the gold completion; they differ in the
+completion granularity and in how the cross-file corpus reaches us.
+CrossCodeEval (single-line) and CrossCodeLongEval (chunk and function) ship a
+\emph{pre-retrieved} set of cross-file fragments per instance --- selected by the
+benchmark authors with a query built from the context \emph{above} the hole,
+never from the ground truth (CrossCodeLongEval's release labels its queries
+``query-without-gt'') --- and our BM25 ranks within that shipped set at
+inference. RepoEval ships whole repositories, so our BM25 builds its windows
+live over the repository's files. In every case retrieval is
+\emph{within-repository} and \emph{cross-file}: chunks come only from other
+files of the same project (never from another repository, and never from the
+file being completed), and every query is the last 20 lines of
+$X_{\text{left}}$, so no retrieval decision ever sees the ground truth.}
+
 \subsection{Static-Analysis Gate}
 \label{sec:analyzer}
 \new{The static gate asks one question of the zero-shot completion $\hat{y}_0$:
 does it use any identifier that is not defined anywhere in the file being edited?
-A confident call to a helper that exists nowhere is exactly the structural
+A confident call to a helper function that exists nowhere is exactly the structural
 hallucination the confidence gate cannot see. We answer the question with the
 \textbf{pyflakes} static checker~\footnote{\texttt{github.com/PyCQA/pyflakes}}
-rather than a hand-written analyzer, and the procedure is deliberately simple:}
+rather than a custom analyzer:}
 
 \new{\textbf{(1) Reconstruct the file.} We splice the completion back into its
 context, forming $X_{\text{left}} + \hat{y}_0 + X_{\text{right}}$, and record the
 line span that $\hat{y}_0$ occupies. \textbf{(2) Run pyflakes.} pyflakes resolves
-every name against the file's own bindings --- imports, function/class
+every name against the file's own bindings such as imports, function/class
 definitions, assignments, parameters, comprehension variables,
 \texttt{with}/\texttt{except} targets, the walrus operator, and so on --- using a
 complete lexical binding model, ignores names that appear inside strings or
 comments, and emits an \emph{undefined name} report (code F821) for each use of a
 name that nothing in the file binds. \textbf{(3) Restrict and decide.} We keep
 only the undefined-name reports that fall on $\hat{y}_0$'s own lines (discarding
-any caused by the surrounding context) and \emph{fire} the gate --- triggering
-retrieval --- if at least one remains.}
+any caused by the surrounding context) and \ugr{\emph{fire} the gate ---
+triggering retrieval --- if at least one remains.}}
 
-\new{The check is purely in-file and resolution-only: it consults the imports and
-definitions already present in $X$, needs \emph{no} repository-wide symbol table
-and \emph{no} code execution, and runs in milliseconds. Two properties matter for
+\new{The check is purely in-file: it consults the imports and
+definitions already present in $X$, needs \emph{no} repository-wide information, and runs in milliseconds. Two properties matter for
 soundness. First, because pyflakes uses a full binding model it does not
 false-positive on legitimate bindings (e.g.\ a match capture or a \texttt{with
 \dots\ as} alias) that a positional heuristic would miss. Second, if the
 reconstructed file fails to parse, the gate \emph{abstains} (it does not fire), so
-a malformed completion can never manufacture a spurious trigger. This pyflakes
-gate --- not a multi-check analyzer --- is what produces every cascade ($C4$)
+a malformed completion can never result in a spurious trigger. This pyflakes
+gate is what produces every cascade ($C4$)
 decision and every hallucination number we report (Section~\ref{sec:results}).}
 
 \subsection{Datasets}
 \label{sec:dataset}
 
-Our approach is training-free (the static gate parses code; the CARD estimator is
-the only learned component and is calibrated once per model, not per dataset), so
-our data requirement is entirely on the \emph{evaluation} side: we need
-repository-level completion benchmarks that (i) ship the cross-file context our
-gate and the BM25 retriever consume, (ii) were curated to limit overlap with code
-LM training data, and (iii) span a range of \emph{completion granularities}, since
-our central claim is about a failure mode (structural hallucination) whose
-prevalence we expect to grow with the length of the generated span. We therefore
-evaluate on four Python surfaces drawn from three established benchmarks; their
+Our proposed approach is training-free: the static gate parses code, the CARD estimator is
+the only learned component and is calibrated once per model, not per dataset. Hence,
+our data requirement is entirely on the \emph{evaluation} side. We therefore
+evaluate on four Python datasets drawn from three established benchmarks; their
 statistics are summarised in Table~\ref{tab:datasets} and
 Fig.~\ref{fig:datasets}.
 
 \begin{table}[tb]
 \caption{Evaluation surfaces. ``GT lines'' is the ground-truth completion length
 in lines; ``single'' is the fraction of single-line targets. Scoring mode is the
-span the prediction is truncated to before computing accuracy
+span the prediction is truncated to before computing accuracy.
 (Section~\ref{sec:metrics}).}
 \label{tab:datasets}
 \centering
@@ -344,15 +400,15 @@ and multi-line function bodies (RepoEval, CCLong-function, median 8--9 lines).}
 (median 38 characters); the model emits a short, mostly local completion. We
 include it as the easy end of the spectrum and as the setting used by our CARD
 baseline~\cite{zhang2024card}: with so little generated code, there is little room
-for a structural hallucination, so this surface is a sanity floor on which we
-expect the static gate to fire rarely and change little.
+for a structural hallucination, so this surface is a sanity check on which we
+expect the static gate to fire rarely and improve marginally.
 
 \textbf{Multi-line functions: RepoEval (function) and CCLong (function).} Here the
-hole is an entire function body --- a median of 8--9 lines and up to 31. This is
+hole is an entire function body: a median of 8--9 lines and up to 31. This is
 the regime we find most interesting for two reasons. First, generating many lines
 gives the model many opportunities to reference helper functions, classes, or
 attributes that do not exist, so we expect structural hallucinations to be most
-frequent here --- this is where we want to ``push the models and see where they
+frequent here, being the dataset on which we want to ``push the models and see where they
 hallucinate.'' Second, function completion is what lets us introduce
 \emph{truncation}: a code LM asked for one function body keeps generating into the
 next definition, so the raw output must be cut at the end of the body before it is
@@ -366,19 +422,27 @@ that it does not interact with the static check.
 and function regimes: short enough that targets are often a single statement, but
 multi-line often enough (34\%) that the prediction must be truncated to the gold's
 line count --- matching Repoformer's chunk metric --- rather than to a function
-body. We use it to test whether our findings on functions degrade gracefully to
+body. \ugr{Concretely: a chunk is an \emph{arbitrary} span of lines, not a
+syntactic unit, so there is no natural boundary (like a function's dedent) at
+which to stop scoring. The model, however, keeps writing past the span.
+Following Repoformer, we therefore count the gold's non-blank lines --- say
+three --- keep only the prediction's first three non-blank lines, and score
+those against the gold; everything the model wrote beyond the target span is
+ignored by the accuracy metrics (but, as always, still visible to the
+hallucination metrics, which read the complete output).} We use it to test
+whether our findings on functions degrade gracefully to
 shorter, less structurally rich targets.
 
-\textbf{Why this selection.} The benchmarks were curated by their authors to
-reduce training-data contamination (CrossCodeEval samples permissively licensed
+\textbf{Why this selection.} The benchmarks were curated to
+reduce training-data contamination: CrossCodeEval samples permissively licensed
 repositories created after common pre-training cutoffs; CCLong is built from 1{,}500
-held-out repositories), which protects the credibility of the no-retrieve
+held-out repositories, which protects the credibility of the no-retrieve
 baseline. More importantly for our study, the four surfaces deliberately bracket
 the hypothesised effect: the smaller, shorter targets (CrossCodeEval line,
 CCLong chunk) are where we \emph{expect few hallucinations} and therefore act as
 controls, while the longer function-body targets (RepoEval, CCLong function) are
 where we expect the static gate to matter most. Confirming that the gate is both
-near-inert on the controls and strongly beneficial on the long targets is exactly
+inactive on the controls and strongly beneficial on the long targets is exactly
 the evidence our claim needs.
 
 \section{Experiment Setup}
@@ -387,7 +451,7 @@ the evidence our claim needs.
 We evaluate three open-weight code LMs spanning an order of magnitude in size:
 \textbf{Qwen2.5-Coder-0.5B} and \textbf{Qwen2.5-Coder-1.5B}~\cite{hui2024qwen25coder}
 and \textbf{CodeLlama-7B}~\cite{roziere2023codellama}. All are used zero-shot
-(no fine-tuning of the generator); the only learned component is CARD's
+(no fine-tuning of the generator). The only learned component is CARD's
 critique estimator. We compare four configurations, all sharing the same
 generator and retriever so differences isolate the gating policy: \textbf{C1}
 no-retrieve (in-file context only), \textbf{C2} always-retrieve,
@@ -419,7 +483,17 @@ identifier-matching metric of CrossCodeEval~\cite{ding2023cce}.
 
 \textbf{Hallucination metrics.} Our target failure mode is the \emph{invented
 identifier}: a name the model emits that is both (A4) absent from the ground truth
-and (B2) unresolvable by static analysis. We report \textbf{$h_{A4B2}$}, the
+and (B2) unresolvable by static analysis. \ugr{The labels come from the metric
+catalogue we drafted for this project: family~A collects \emph{reference-based}
+conditions (computed against the gold) and family~B collects
+\emph{static-analysis} conditions (computed by a checker), with A4 =
+``emits an identifier not used by the gold'' and B2 = ``the checker reports the
+identifier as undefined''. Neither condition is a good hallucination signal
+alone: A4 by itself over-counts, because a \emph{valid alternative} name that
+the gold simply did not use is not a hallucination; B2 by itself is circular
+with our gate, because the cascade triggers on the same undefined-name analysis.
+Their conjunction isolates exactly the names that are both un-referenced and
+unresolvable --- ``made up'' in the everyday sense.} We report \textbf{$h_{A4B2}$}, the
 fraction of predictions containing at least one identifier satisfying both
 conditions (B2 via pyflakes' F821 undefined-name analysis on the reconstructed
 file), as the strict ``made-up name'' signal, and the looser \textbf{$h_{A4}$}
@@ -432,12 +506,15 @@ complete generation both avoids this artefact and matches what a deployed gate
 would see. The same principle governs the cascade's static-gate trigger.
 
 \textbf{Efficiency metrics.} We report the \emph{retrieval rate} (\% of instances
-for which retrieval fired), the direct cost knob, and per-instance
+for which retrieval fired)\ugr{ --- the fraction of instances that pay for a
+retrieval-augmented second pass, i.e.\ the quantity a gating policy directly
+controls and a hardware-independent proxy for its cost ---} and per-instance
 \emph{latency} (ms). For the adaptive configs latency is the cost model of
 CARD/Repoformer: a zero-shot pass for every instance plus a second
 retrieval-augmented pass only when the gate fires.
 
 \subsection{Configuration and Implementation Details}
+\label{sec:config}
 \textbf{Generation.} We use fill-in-the-middle (FIM)
 prompting~\cite{bavarian2022fim} with each model's native FIM sentinels, plus a set
 of stop strings that halt generation at the natural boundary (preventing the
@@ -457,23 +534,37 @@ Qwen2.5-Coder-1.5B, and CodeLlama-7B), each on self-supervised samples from The
 Stack (deduplicated)~\cite{kocetkov2022stack} following the CARD
 procedure~\cite{zhang2024card}. Each estimator is a property of its generator,
 not of any benchmark, so it is calibrated once and reused unchanged across all
-four datasets and the entire $T_{\text{RAG}}$ sweep; the gradient-boosted model
-itself is lightweight (sub-millisecond inference per instance). The
+four datasets. \ugr{LightGBM itself is a gradient-boosted decision-tree (GBDT)
+learner: the regressor is an ensemble of small regression trees built
+sequentially, each new tree fitting the residual error of the ensemble so far,
+with histogram-based split finding for speed. We chose it for the same reasons
+CARD did: on a 13-feature tabular input it is accurate with little tuning,
+trains in seconds--minutes on CPU, and predicts in well under a millisecond ---
+negligible next to a generation pass.} The
 static-analysis gate is realised with pyflakes over the reconstructed file
 (Section~\ref{sec:analyzer}). Retrieval
 is Okapi BM25~\cite{robertson2009bm25} over 20-line/stride-10 windows, returning the
 top-10 chunks, following the RepoCoder convention~\cite{zhang2023repocoder}.
+\ugr{One retrieval subtlety mattered enough to flag: the loaders keep a copy of
+the \emph{current} file inside each instance's file map (other components need
+it), and an early version of our harness let BM25 index it. Because the query is
+the 20 lines directly above the hole, the window overlapping the hole --- which
+contains the reference solution --- then ranked in the retrieved top-10 for
+92--100\% of instances, silently inflating every retrieval-augmented score. The
+final harness excludes the completion's own file from the corpus by
+construction; we verified post-fix that no retrieved chunk comes from the
+target file on any benchmark, and \emph{all} numbers reported in this paper are
+produced with the corrected, leak-free corpus.}
 
 \textbf{Infrastructure and scale.} All inference runs on a single
 \textbf{NVIDIA A100-80GB} GPU (Google Colab) using
 vLLM~\cite{kwon2023vllm} with PagedAttention and continuous batching; the chip is
 fixed across models so the reported latencies are comparable within a benchmark.
 We batch the C1/C2 generation passes and share a generation cache across
-configurations; the full $T_{\text{RAG}}$ sweep is then computed \emph{post hoc} by
+configurations. The full $T_{\text{RAG}}$ sweep is then computed \emph{post hoc} by
 replaying CARD and the cascade over the frozen generations, so no instance is
 generated twice. In total the study covers 13{,}120 instances $\times$ two
 generation passes $\times$ three models, plus the 19-point threshold sweep.
-
 
 \section{Results}
 \label{sec:results}
@@ -513,6 +604,12 @@ Repoformer~\cite{wu2024repoformer} --- but a non-trivial slice is still wasted o
 harmed, which is precisely the slice an adaptive policy should reclaim. Retrieval
 is therefore worth gating, motivating RQ2--RQ4.
 
+\sugg{\noindent\textbf{Answer (RQ1).} Cross-file retrieval helps substantially
+\emph{on average} on every surface and model, but not uniformly per instance: a
+non-trivial share of completions is left unchanged or actively degraded, so an
+always-retrieve policy wastes part of its budget --- selective retrieval is
+justified.}
+
 \begin{figure*}[tb]
 \centering
 \includegraphics[width=\textwidth]{figures/fig_delta_es_hist.pdf}
@@ -527,7 +624,7 @@ selectively rather than uniformly (RQ1).}
 Figure~\ref{fig:cost} traces accuracy against retrieval budget as
 $T_{\text{RAG}}$ is swept. The cascade (and CARD, which nearly coincides on ES)
 recovers most of the C2 accuracy well before reaching a 100\% retrieval rate: the
-curves rise steeply and then flatten, so a confidence gate buys most of
+curves rises steeply and then flattens, so a confidence gate buys most of
 retrieval's benefit at a fraction of its cost --- reproducing CARD's and
 Repoformer's central efficiency finding~\cite{zhang2024card,wu2024repoformer} on
 our benchmarks and models. Figure~\ref{fig:latency} shows the same trade-off in
@@ -537,9 +634,15 @@ to one thing: the $h_{A4B2}$ columns of Table~\ref{tab:endpoints} show that
 always-retrieving does not reduce invented identifiers --- on the function tasks
 at 7B it \emph{increases} them (RepoEval nearly triples, $0.018\rightarrow0.051$;
 CCLong $0.042\rightarrow0.054$), because retrieval lets the model write more,
-longer code and thus emit more unresolvable names. A policy that only optimises confidence/ES
+longer code and thus emit more unresolvable names. A policy that only optimizes confidence/ES
 therefore leaves a structural failure mode untouched. This is the gap our static
 gate targets.
+
+\sugg{\noindent\textbf{Answer (RQ2).} A small retrieval budget buys most of
+always-retrieve's accuracy --- the confidence gate trades cost for accuracy
+well --- but the gate is blind to structural validity: invented identifiers
+persist, and can even increase, under retrieval, leaving exactly the failure
+mode a structural signal can address.}
 
 \begin{figure*}[tb]
 \centering
@@ -561,24 +664,29 @@ per-instance latency for accuracy (RQ2).}
 \end{figure}
 
 \subsection{RQ3: The static gate suppresses the hallucinations CARD misses}
-Table~\ref{tab:cascade} compares CARD (C3) and the cascade (C4) at a low budget
+Table~\ref{tab:cascade} compares CARD (C3) and the cascade (C4) at a low
+\ugr{retrieval budget, obtained with the strictest threshold
 ($T_{\text{RAG}}=0.05$, where CARD is most conservative and retrieves almost
-nothing). Adding the static-analysis gate retrieves an extra $2$--$9\%$ of instances
---- precisely those whose confident zero-shot output references an unresolvable
-name --- and cuts the invented-identifier rate by \textbf{$3.6\times$ to
-$11.3\times$} (to zero on RepoEval-1.5B). The effect is consistent across all
+nothing). Threshold and budget are two views of the same knob: the threshold is
+what we set, and the realised retrieval rate --- the budget actually spent ---
+is what it produces.} Adding the static-analysis gate retrieves an extra $2$--$9\%$ of instances --- precisely those whose confident zero-shot output references an unresolvable name --- and cuts the invented-identifier rate by \textbf{$3.6\times$ to $11.3\times$} (to zero on RepoEval-1.5B). The effect is consistent across all
 twelve (benchmark $\times$ model) cells. Figure~\ref{fig:hall} shows it holds along
 the entire budget axis: at any matched retrieval rate the cascade (solid) sits
 below CARD (dashed) in invented-identifier rate, the two converging only as both
-approach always-retrieve (where there is nothing left to select). Figure~\ref{fig:cascade}
-summarises the headline reduction as paired bars. Because the trigger and the
+approach always-retrieve (where there is nothing left to select). Figure~\ref{fig:cascade} summarises the headline reduction as paired bars. Because the trigger and the
 $h_{A4B2}$ metric both rest on undefined-name analysis, part of this drop is
 structural by construction; we therefore also verified that the looser, fully
 independent $h_{A4}$ (absent-from-gold) moves in the same direction, and that edit
-similarity does not fall (next subsection).
+similarity does not fall \ugr{(Section~\ref{RQ4})}.
+
+\sugg{\noindent\textbf{Answer (RQ3).} Yes: triggering on unresolvable
+identifiers retrieves precisely the instances the confidence gate wrongly
+keeps, cutting the invented-identifier rate severalfold at a few percent of
+extra retrieval, consistently across all twelve settings (statistical
+significance reported in Section~\ref{sec:threats}).}
 
 \begin{table*}[tb]
-\caption{RQ3 --- the cascade's contribution at a low budget ($T_{\text{RAG}}=0.05$).
+\caption{RQ3 --- the cascade's contribution at a low budget/threshold ($T_{\text{RAG}}=0.05$).
 For a few percent of extra retrieval (r\%), the static gate cuts the
 invented-identifier rate $h_{A4B2}$ by the factor in the last column, while edit
 similarity is non-decreasing. ``$\rightarrow$0'' denotes a drop to zero.}
@@ -607,7 +715,7 @@ function tasks, exactly as hypothesised.}
 \label{fig:cascade}
 \end{figure*}
 
-\subsection{RQ4: The gate is free and scales as hypothesised}
+\subsection{RQ4: The gate is free and scales as hypothesised} \label{RQ4}
 \textbf{No accuracy regression.} The cascade obeys an \emph{asymmetry guarantee} by
 construction --- it only \emph{adds} retrieval to CARD's skip decisions --- and the
 data confirm it empirically: at every one of the 19 thresholds, in every cell, C4
@@ -626,6 +734,12 @@ is largest in absolute terms where hallucination is largest (smaller models,
 function tasks) and is near-inert on the single-line control
 (Fig.~\ref{fig:cascade}), as intended.
 
+\sugg{\noindent\textbf{Answer (RQ4).} The gate is effectively free: by
+construction and empirically it never lowers edit similarity at any threshold,
+adds only single-digit-percent retrieval, and its benefit concentrates exactly
+where hallucination lives --- smaller models and function-length targets ---
+while staying near-inert on the single-line control.}
+
 \textbf{Truncation matters.} Table~\ref{tab:dual} shows the headline (truncated)
 ES is far above the raw ES on every multi-line surface (e.g.\ 7B CCLong-function C2
 $0.839$ truncated vs.\ $0.426$ raw): without body/line truncation, over-generation
@@ -641,7 +755,6 @@ justifying span truncation for accuracy (and on-complete scoring for hallucinati
 \centering\footnotesize
 \input{tables/table_dual}
 \end{table}
-
 
 \section{Discussion}
 
@@ -674,19 +787,20 @@ single-line CrossCodeEval, strongest on function bodies (Fig.~\ref{fig:cascade})
 This is intuitive --- a one-line completion rarely has space to call a non-existent
 function --- and it is why benchmarks like CCLong~\cite{wu2024repoformer}, which
 deliberately lengthen the target, are the right testbed for structural
-hallucination. It also exposes a measurement subtlety the community should heed: a
-model asked for one function over-generates into the next, so accuracy needs
-span-truncation (Table~\ref{tab:dual}) \emph{while} the structural signal needs the
-complete output; conflating the two (truncating before the static check) can
-manufacture hallucinations that the model never produced.
-
+hallucination. \ugr{It also surfaces a scoring pitfall the community should
+heed: a model asked for one function over-generates into the next, so the two
+measurements need \emph{different} views of the output --- accuracy must be
+scored on the span-truncated prediction (Table~\ref{tab:dual}), while the
+structural signal must see the complete generation. Truncating the output
+before static verification conflates these two requirements, falsely
+manufacturing hallucinations that the model never actually made.}
 \subsection{Implications}
 For \textbf{practitioners}, the static gate is a near-zero-cost add-on to any
 confidence-gated RAG completion system: it needs no training, runs in milliseconds
 on the already-generated output, and removes the bulk of invented-identifier
-hallucinations at a few percent extra retrieval and no accuracy loss --- a
-favourable trade in an IDE setting where a confidently-wrong API call is more
-damaging than a missing one. For the \textbf{research community}, our results argue
+hallucinations at a few percent extra retrieval and no accuracy loss --- \ugr{a
+favourable trade whenever a confidently wrong completion costs the user more
+than a brief retrieval delay.} For the \textbf{research community}, our results argue
 that (i) selective-retrieval policies should consider \emph{structural} signals,
 not only confidence; (ii) repository-level completion should be evaluated with an
 explicit structural-hallucination metric, not edit similarity alone, since
@@ -714,6 +828,7 @@ scope resolver). Finally, \textbf{repository-adaptive thresholds}, since duplica
 and modularity vary across projects~\cite{zhang2023repocoder}.
 
 \subsection{Threats to the Validity}
+\label{sec:threats}
 \textbf{Construct.} Edit similarity and exact match measure surface overlap, not
 functional correctness; we do not run tests (pass@k), so a ``correct'' completion
 may still be semantically wrong, and vice versa. Our hallucination metric is a
@@ -731,7 +846,13 @@ decreases.
 \textbf{Internal.} We re-implemented the CARD baseline rather than using original
 code, and reused the 1.5B/7B critique estimators across datasets; a calibration
 difference would shift C3 (and thus the C3$\rightarrow$C4 gap) but not the asymmetry
-guarantee, which is structural. Generation is greedy and deterministic, so results
+guarantee, which is structural. \ugr{A retrieval-corpus bug we caught during
+this round (the completion's own file was indexable by BM25, letting the
+reference solution reach the prompt; Section~\ref{sec:config}) was fixed and
+the retrieval-augmented generations underlying every reported number (the C2
+pass, which the threshold sweep replays for C3/C4) were regenerated with the
+leak-free corpus; we verified post-fix that no
+retrieved chunk originates from the target file on any benchmark.} Generation is greedy and deterministic, so results
 are reproducible but reflect a single decode. Latencies are measured under vLLM
 continuous batching and are therefore throughput-amortised; we use them only for
 within-benchmark, same-hardware comparison and rely on retrieval rate as the
@@ -775,7 +896,7 @@ comparisons reproducible.
 
 \newpage
 \section{Appendix: Task Assignment Sheet}
-\instruction{After discussion among yourself within your group, list the main project-related tasks assigned to and done by each team member. 
+\instruction{After discussion among yourself within your group, list the main project-related tasks assigned to and done by each team member.
 Tasks can be: conducting a literature review, preparing a dataset, implementation of technique X, code review, fine-tuning a model, prompt design, setting up eval pipeline, evaluating the technique X, improving repo documentation, writing section X of the report, preparing the presentation (section methodology, section evaluation, etc.).
 The goal is to have a balanced task distribution among team members. }
 
