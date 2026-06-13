@@ -61,15 +61,10 @@
 
 % \author{\IEEEauthorblockN{Anonymous Authors}}
 
-\author{\IEEEauthorblockN{first last name}
-\IEEEauthorblockA{\textit{Delft University of Technology}\\
-Delft, Netherlands \\
-email@tudelft.nl}
-\and
-\IEEEauthorblockN{Second Author}
-\IEEEauthorblockA{\textit{Delft University of Technology}\\
-Delft, Netherlands \\
-email@tudelft.nl}
+\author{%
+\IEEEauthorblockN{Dan Darie, Luca Ionescu, Alexandru Nistor, David Nistor, Chris \'Obis}
+\IEEEauthorblockA{\textit{Delft University of Technology}, Delft, The Netherlands\\
+\{D.Darie, Ionescu-8, A.Nistor, D.Nistor, C.Obis-1\}@student.tudelft.nl}
 }
 
 
@@ -940,9 +935,7 @@ asymmetry guarantee. Finally, because we run twelve hallucination tests we note
 the multiple-comparison caveat: under Bonferroni correction ($\times12$) the
 eleven McNemar results at $p<10^{-5}$ remain significant, while RepoEval-7B
 ($p=0.016$, only eight flagged instances) does not survive correction and should
-be read as underpowered rather than null. To our knowledge no prior
-adaptive-retrieval code-completion paper~\cite{zhang2024card,wu2024repoformer,zhang2023repocoder,jiang2023flare}
-reports significance tests on its main results.}
+be read as underpowered rather than null.}
 
 \textbf{External.} Findings cover three code LMs (0.5B--7B), Python only, and four
 benchmarks; larger models hallucinate less (Table~\ref{tab:endpoints}), so the
