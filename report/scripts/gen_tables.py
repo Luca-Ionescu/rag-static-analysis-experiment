@@ -18,6 +18,18 @@ def get(rows,mode,cfg,t=None):
             return r
 def num(x,d=3): return f"{F(x):.{d}f}"
 
+# paired-McNemar significance stars for the cascade hallucination reduction (C3 vs C4)
+def stars(p):
+    if p is None: return ""
+    p=float(p)
+    return r"$^{***}$" if p<1e-3 else (r"$^{**}$" if p<1e-2 else (r"$^{*}$" if p<0.05 else r"$^{\mathrm{ns}}$"))
+_MCN={}
+_mcn=os.path.join(os.path.dirname(os.path.abspath(__file__)),"mcnemar_results.csv")
+if os.path.exists(_mcn):
+    for _r in csv.DictReader(open(_mcn)): _MCN[(_r["dataset"],_r["model"])]=_r["p"]
+_DSLAB={"crosscodeeval_py":"CCE-line","repoeval_function":"RepoEval-fn",
+        "crosscodelongeval_function":"CCLE-fn","crosscodelongeval_chunk":"CCLE-chunk"}
+
 # ---- Table I: endpoints C1/C2 (ES, EM, idF1, hallA4B2, latency) ----
 rows_out=[]
 rows_out.append(r"\begin{tabular}{ll rrrr r rrrr r}")
@@ -49,6 +61,7 @@ for di,(ds,pretty,mode) in enumerate(DS):
         rws=load(tag,ds); c3=get(rws,mode,"C3_card",T); c4=get(rws,mode,"C4_cascade",T)
         h3,h4=F(c3['hall_A4B2']),F(c4['hall_A4B2'])
         red = f"{h3/h4:.1f}$\\times$" if h4>1e-9 else (r"$\rightarrow$0" if h3>0 else "--")
+        red = red + stars(_MCN.get((_DSLAB[ds],ml)))
         lead = f"\\multirow{{3}}{{*}}{{{pretty}}}" if mi==0 else ""
         out.append(f"{lead} & {ml} & {F(c3['retrieval_pct']):.0f} & {num(c3['edit_similarity'])} & {num(c3['hall_A4B2'],4)} & & "
                    f"{F(c4['retrieval_pct']):.0f} & {num(c4['edit_similarity'])} & {num(c4['hall_A4B2'],4)} & {red}\\\\")
