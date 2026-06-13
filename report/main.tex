@@ -112,7 +112,7 @@ helpers, types, and constants declared elsewhere in the project.
 \emph{Repository-level} code completion mirrors this reality --- the model
 completes code inside a real project rather than an isolated snippet --- and is
 therefore the setting closest to how completion tools are actually used.}
-Code completion \ugr{thus} requires assistance from beyond the current file, as utility functions, shared variables and imported types can be defined elsewhere in the project. \textbf{Retrieval Augmented Generation} \cite{lewis2021retrievalaugmentedgenerationknowledgeintensivenlp} addresses this \ugr{need} by augmenting the model's prompt with cross-file-relevant snippets retrieved from the repository before generation. However, retrieval doesn't always help due to pipelines either retrieving on every instance unconditionally and not taking into account the local context or adaptive approaches relying too much on model's confidence. Therefore, current approaches such as \textbf{CARD} \cite{zhang2024card} share a common issue: token-level confidence not distinguishing a \ugr{syntactically} correct line from one whose identifiers do not appear in the repository, not being able to detect structural hallucinations.  To address this gap,  we augment current models' confidence gate with a static analysis gate, which checks whether \new{the identifiers the completion uses are defined in the scope of the current file using the \textbf{pyflakes} linter}. The cascade pipeline operates in 3 stages: zero-shot generation, CARD's confidence gate, and our static analysis gate. The results of our experiments suggest that token-level confidence alone is insufficient and that lightweight structural checks can help in avoiding structural hallucinations. Our main contribution consists of  the static analysis gate approach which detects out-of-scope identifiers hallucinations without the need for fine tuning the model.
+Code completion \ugr{thus} requires assistance from beyond the current file, as utility functions, shared variables and imported types can be defined elsewhere in the project. \textbf{Retrieval Augmented Generation} \cite{lewis2021retrievalaugmentedgenerationknowledgeintensivenlp} addresses this \ugr{need} by augmenting the model's prompt with cross-file-relevant snippets retrieved from the repository before generation. However, retrieval doesn't always help: pipelines either retrieve on every instance unconditionally, adding overhead and ignoring the local context, or adaptive approaches rely too much on the model's confidence. Adaptive approaches such as \textbf{CARD} \cite{zhang2024card} share a common issue rooted in the well-documented self-bias of large language models \cite{xu-etal-2024-pride}: token-level confidence does not distinguish a \ugr{syntactically} correct line from one whose identifiers do not appear in the repository, and so cannot detect structural hallucinations.  To address this gap,  we augment current models' confidence gate with a static analysis gate, which checks whether \new{the identifiers the completion uses are defined in the scope of the current file using the \textbf{pyflakes} linter}. The cascade pipeline operates in 3 stages: zero-shot generation, CARD's confidence gate, and our static analysis gate. The results of our experiments suggest that token-level confidence alone is insufficient and that lightweight structural checks can help in avoiding structural hallucinations. Our main contribution consists of  the static analysis gate approach which detects out-of-scope identifiers hallucinations without the need for fine tuning the model.
 \iffalse
 \instruction{The introduction is a crucial part of any paper. A compelling introduction immediately captures the reader's interest and answers the question: ``Why should I read this?" Here is the structure I use for my paper introductions. Feel free to adapt it to your needs or develop your own structure.
 
@@ -136,8 +136,7 @@ Code completion \ugr{thus} requires assistance from beyond the current file, as 
 \end{itemize}}
 \fi
 \section{Problem Statement and Motivation}
-\instruction{Choose a project from the list provided to you.
-Clearly define the chosen task and explain why it intrigues your team (state why should people care about this topic).}
+% (assignment instruction removed; the task and motivation are stated below)
 
 \ugr{\textbf{Task.} Given the code before and after a cursor position in one file
 of a repository (the in-file context $X$), the system must produce the missing
@@ -156,7 +155,7 @@ practical question --- and the core of this project --- is \emph{when} retrieval
 is worth its cost, and on what evidence that decision should be made.}
 
 \subsection{Research Questions}
-\instruction{Here it should be a story of RQs and how they relate and why we define them, rather than listing them. furthermore, we will have subsections for evaluation metrics, datasets (for both training testing), baselines, and configuration details. note that if dataset creation is an important step of your work, you can move it to the approach section.}
+% (assignment instruction removed; the RQ narrative follows)
 
 \rev{Our study is organised around four questions that build on one another. We
 first ask whether retrieval is even worth gating: \textbf{RQ1 --- Is cross-file
@@ -171,7 +170,7 @@ controls the \emph{retrieval budget} (the fraction of instances on which
 retrieval is performed and paid for), so RQ2 asks two things: how efficiently
 the confidence gate converts budget into accuracy, and what kind of mistakes
 remain in the completions it confidently keeps.} We hypothesise that confidence
-correlates with accuracy but is blind to structural validity, letting confident
+correlates with accuracy but conflates statistical likelihood with formal structural validity, letting confident
 yet unresolvable completions through. This motivates our contribution:
 \textbf{RQ3 --- Does a training-free static-analysis gate suppress the
 hallucinated identifier that the confidence gate misses, and at what
@@ -185,23 +184,72 @@ answer them.}
 
 
 \section{Background and Related Work}
-\instruction{To ensure a comprehensive understanding and position your work in the broader landscape context, it is essential to familiarize yourself with recent advancements in the domain.
-Search for recent work that addresses your specific problem.
-Moreover, research studies that use your proposed model/method and summarise them.
-Use tools like Google Scholar, Semantic Scholar, or DBLP for your search.
-Prioritize contributions from top software engineering conferences such as ICSE, ESEC/FSE, ASE, and MSR and well-known journals like IEEE TSE, ACM TOSEM, and Springer EMSE.
-Find patterns in the relevant literature for instance work on memorization, LLMs, and attacks. etc.
-keep it short. make sure to highlight the gaps that you fill, what you add to the existing body of knowledge}
+\subsection{Code Language Models and Repository-Level Completion}
+Modern code completion is driven by \emph{code language models} (code LMs):
+transformer models pre-trained on large source-code corpora such as The
+Stack~\cite{kocetkov2022stack}, including the Qwen2.5-Coder
+family~\cite{hui2024qwen25coder} and CodeLlama~\cite{roziere2023codellama} that we
+evaluate. Beyond left-to-right generation, these models are trained with
+\emph{fill-in-the-middle} (FIM) objectives~\cite{bavarian2022fim} that condition on
+the code both before and after the cursor --- the natural formulation of editor
+completion. Early benchmarks (HumanEval, MBPP) score self-contained, single-file
+functions; Ding et al.~\cite{ding2023cce} argue this oversimplifies real
+development, where a correct completion routinely depends on symbols defined in
+\emph{other} files, and introduce CrossCodeEval, a multilingual benchmark whose
+examples are built --- via static analysis --- to \emph{require} cross-file
+context. RepoCoder and its RepoEval benchmark~\cite{zhang2023repocoder} likewise
+frame the \emph{repository-level} task across line, API, and function-body
+granularities. A consistent finding, which our no-retrieve baselines reproduce, is
+that code LMs restricted to the current file are knowledge-limited rather than
+incapable: accuracy rises once the missing cross-file context is supplied.
 
-% examples
-\subsection{Large Language Models (solution)}
-\instruction{Describe background knowledge, e.g., what is an LLM, fine-tuning, prompt engineering, chain of thought, instruct tuning, etc (any of which you use in your work)}
+\subsection{Retrieval-Augmented Code Completion}
+Retrieval-augmented generation
+(RAG)~\cite{lewis2021retrievalaugmentedgenerationknowledgeintensivenlp} supplies
+that context by retrieving relevant snippets from the repository and prepending
+them to the prompt. RepoCoder~\cite{zhang2023repocoder} couples a similarity-based
+retriever with a code LM in an \emph{iterative} retrieve-generate loop, improving
+the in-file baseline by over $10\%$ and establishing the BM25-over-sliding-window
+convention we adopt. The long-form CrossCodeLongEval benchmark introduced with
+Repoformer~\cite{wu2024repoformer} extends the setting to multi-line function and
+chunk completion, where a model has more room to drift. Across these works
+retrieval helps \emph{on average}, but a recurring observation --- which our study
+quantifies and McNemar/bootstrap-tests --- is that a substantial fraction of
+retrievals are unnecessary or even harmful, motivating policies that decide
+\emph{when} to retrieve.
 
+\subsection{Adaptive and Selective Retrieval}
+Rather than retrieving unconditionally, \emph{adaptive} methods gate retrieval on a
+signal of need. In open-domain NLP, FLARE~\cite{jiang2023flare} pioneered
+confidence-triggered active retrieval: it drafts the upcoming sentence and
+re-retrieves only when that draft contains low-probability tokens. For code,
+Repoformer~\cite{wu2024repoformer} trains a code LM by self-supervision to
+\emph{self-evaluate} whether retrieval will improve its output, using the same
+model as both the selective-retrieval policy and the generator, and reaches
+state-of-the-art accuracy with up to $70\%$ inference speed-up. CARD~\cite{zhang2024card},
+the baseline we build on, is a lightweight \emph{critique} model that predicts the
+necessity of retrieval (and selects among candidate predictions) from the
+generator's own logit statistics; it plugs into any RAG completion system and cuts
+$6$--$46\%$ of retrievals while reducing latency. What unites FLARE, Repoformer,
+and CARD is that the gating signal is a form of model \emph{confidence} or
+self-assessment.
 
-\subsection{Bug Localization (problem)}
-\instruction{Give relevant work on the problem you are solving, for example, you are proposing a bug localization approach, or you are working on benchmarks, etc. Study the relevant work and present them here.}
-
-\subsection{Add more sub-headings based on your work}
+\subsection{Hallucination and the Structural Gap}
+LLMs are prone to \emph{hallucination} --- fluent output that is factually or
+referentially invalid~\cite{jiang2023flare} --- compounded by \emph{self-bias},
+the tendency of an LLM to over-rate its own
+generations~\cite{xu-etal-2024-pride}. In completion this surfaces as the
+\emph{structural} hallucination we target: a confident call to a function, class,
+or attribute that exists nowhere in the project. Static analysis is well suited to
+catching exactly this --- indeed CrossCodeEval~\cite{ding2023cce} uses it to
+\emph{construct} its cross-file examples --- yet existing adaptive gates remain
+confidence-based and are therefore blind to it: a token-level score cannot tell a
+resolvable identifier from an invented one. This is the gap we fill. We keep
+CARD's confidence gate and add a training-free \emph{static-analysis} gate that
+triggers retrieval when the zero-shot completion references an unresolvable
+identifier, complementing a likelihood signal with a structural one. To our
+knowledge this is the first adaptive-retrieval policy for code completion to gate
+on static-analysis evidence rather than confidence alone.
 
 \section{Approach}
 \label{sec:approach}
@@ -605,7 +653,9 @@ by Repoformer~\cite{wu2024repoformer}, where a large fraction of retrievals do
 not improve the prediction: most of the always-retrieve budget is spent on
 instances it cannot help, and a sizeable slice is harmed by it --- precisely
 what an adaptive policy should reclaim. Retrieval is therefore worth gating,
-motivating RQ2--RQ4.}
+motivating RQ2--RQ4.} \sugg{The mean C1$\rightarrow$C2 gain is significant on every
+surface and model (paired bootstrap, $95\%$ CI excluding zero;
+Section~\ref{sec:threats}).}
 
 \sugg{\noindent\textbf{Answer (RQ1).} Cross-file retrieval helps \emph{on
 average} on every surface and model, but only a minority of instances
@@ -878,7 +928,21 @@ vs.\ the cascade at $T_{\text{RAG}}=0.05$: the reduction is statistically
 significant in all twelve settings ($p<10^{-5}$ in eleven of them; $p=0.016$ on
 RepoEval-7B, where only eight flagged instances remain to begin with), and in
 nine of the twelve the cascade introduces \emph{zero} newly-flagged instances
---- it only removes them.}
+--- it only removes them. For the accuracy side we add a paired bootstrap
+($10{,}000$ resamples) on per-instance edit similarity. Retrieval's gain is
+significant everywhere: the mean $\Delta$ES of always-retrieve over no-retrieve
+(C2$-$C1) spans $+0.025$ to $+0.082$ with $95\%$ CIs excluding zero in all twelve
+settings (Wilcoxon $p\le2.4\times10^{-3}$). The cascade's extra retrievals do not
+cost accuracy: the paired $\Delta$ES of the cascade over CARD at
+$T_{\text{RAG}}=0.05$ is positive in every testable cell ($+0.001$ to $+0.003$,
+$95\%$ CI lower bound $\ge0$), the per-instance counterpart of the deterministic
+asymmetry guarantee. Finally, because we run twelve hallucination tests we note
+the multiple-comparison caveat: under Bonferroni correction ($\times12$) the
+eleven McNemar results at $p<10^{-5}$ remain significant, while RepoEval-7B
+($p=0.016$, only eight flagged instances) does not survive correction and should
+be read as underpowered rather than null. To our knowledge no prior
+adaptive-retrieval code-completion paper~\cite{zhang2024card,wu2024repoformer,zhang2023repocoder,jiang2023flare}
+reports significance tests on its main results.}
 
 \textbf{External.} Findings cover three code LMs (0.5B--7B), Python only, and four
 benchmarks; larger models hallucinate less (Table~\ref{tab:endpoints}), so the
@@ -918,9 +982,31 @@ comparisons reproducible.
 
 \newpage
 \section{Appendix: Task Assignment Sheet}
-\instruction{After discussion among yourself within your group, list the main project-related tasks assigned to and done by each team member.
-Tasks can be: conducting a literature review, preparing a dataset, implementation of technique X, code review, fine-tuning a model, prompt design, setting up eval pipeline, evaluating the technique X, improving repo documentation, writing section X of the report, preparing the presentation (section methodology, section evaluation, etc.).
-The goal is to have a balanced task distribution among team members. }
+\noindent The main project tasks are listed below; \textbf{each team member should
+fill in their name(s)} next to the tasks they led, keeping the distribution
+balanced.
+\vspace{4pt}
+
+\begin{table}[h]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{0.60\columnwidth} p{0.30\columnwidth}}
+\toprule
+Project task & Member(s) \\
+\midrule
+Literature review and related work (Sec.~\ref{sec:approach} background) & \\
+Dataset preparation and loaders (CrossCodeEval, RepoEval, CrossCodeLongEval) & \\
+Static-analysis gate implementation (pyflakes) and tests & \\
+CARD critique estimator (LightGBM) and per-model calibration & \\
+BM25 retrieval pipeline and prompt assembly & \\
+Evaluation harness, threshold sweep, and significance tests & \\
+Running experiments on the three code LMs (Colab/A100) & \\
+Results analysis, figures, and tables & \\
+Report writing and editing & \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 
 
