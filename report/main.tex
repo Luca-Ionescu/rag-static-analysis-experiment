@@ -159,7 +159,7 @@ pointless from an accuracy perspective; if it is unhelpful or harmful on a
 subset, a gate is needed. Once a gate is justified}, we examine the
 state-of-the-art confidence gate: \ugr{\textbf{RQ2 --- When CARD's confidence
 threshold is varied, how much accuracy does each percent of retrieval buy, and
-which errors still slip through when the model is confident?} The threshold
+which errors still slip through when the model is confident?}. The threshold
 controls the \emph{retrieval budget} (the fraction of instances on which
 retrieval is performed and paid for), so RQ2 asks two things: how efficiently
 the confidence gate converts budget into accuracy, and what kind of mistakes
@@ -447,8 +447,8 @@ for a structural hallucination, so this surface is a sanity check on which we
 expect the static gate to fire rarely and improve marginally.
 
 \textbf{Multi-line functions: RepoEval (function) and CCLong (function).} Here the
-hole is an entire function body: a median of 8--9 lines and up to 31. This is
-the regime we find most interesting for two reasons. First, generating many lines
+hole is an entire function body: a median of 8--9 lines and a maximum of 31. This is
+the setting we find most interesting for two reasons. First, generating many lines
 gives the model many opportunities to reference helper functions, classes, or
 attributes that do not exist, so we expect structural hallucinations to be most
 frequent here, being the dataset on which we want to ``push the models and see where they
@@ -501,7 +501,7 @@ no-retrieve (in-file context only), \textbf{C2} always-retrieve,
 \textbf{C3} CARD (retrieve iff $\hat{s}_0 < T_{\text{RAG}}$), and \textbf{C4}
 the cascade (C3, plus retrieve when the static-analysis gate fires on a skipped
 instance). Rather than reporting C3/C4 at one threshold, we sweep
-$T_{\text{RAG}}\in\{0.05,\dots,0.95\}$ to trace the entire cost--accuracy
+$T_{\text{RAG}}\in\{0.05,0.1, \dots,0.95\}$ to trace the entire cost--accuracy
 operating curve.
 
 \subsection{Evaluation Setting and Metrics}
@@ -552,7 +552,7 @@ would see. The same principle governs the cascade's static-gate trigger.
 for which retrieval fired)\ugr{ --- the fraction of instances that pay for a
 retrieval-augmented second pass, i.e.\ the quantity a gating policy directly
 controls and a hardware-independent proxy for its cost ---} and per-instance
-\emph{latency} (ms). For the adaptive configs latency is the cost model of
+\emph{latency} (ms). For the adaptive configurations latency is the cost model of
 CARD/Repoformer: a zero-shot pass for every instance plus a second
 retrieval-augmented pass only when the gate fires.
 
@@ -600,7 +600,7 @@ target file on any benchmark, and \emph{all} numbers reported in this paper are
 produced with the corrected, leak-free corpus.}
 
 \textbf{Infrastructure and scale.} All inference runs on a single
-\textbf{NVIDIA A100-80GB} GPU (Google Colab) using
+\textbf{NVIDIA A100-80GB} GPU using
 vLLM~\cite{kwon2023vllm} with PagedAttention and continuous batching; the chip is
 fixed across models so the reported latencies are comparable within a benchmark.
 We batch the C1/C2 generation passes and share a generation cache across
@@ -612,12 +612,12 @@ generation passes $\times$ three models, plus the 19-point threshold sweep.
 \section{Results}
 \label{sec:results}
 
-We answer the four research questions in turn. Table~\ref{tab:endpoints} gives the
-two fixed-policy endpoints (C1 never retrieve, C2 always retrieve) for every
-benchmark and model; Table~\ref{tab:cascade} isolates the cascade's contribution
-against CARD at a low retrieval budget; Table~\ref{tab:dual} reports the
+We answer the four research questions in this section. Table~\ref{tab:endpoints} gives the
+two fixed-policy results: C1 - never retrieve and C2 - always retrieve for every
+benchmark and model. Table~\ref{tab:cascade} isolates the cascade's contribution
+against CARD at a low retrieval budget. Table~\ref{tab:dual} reports the
 truncated-vs-raw accuracy. Figures~\ref{fig:cost}--\ref{fig:cascade} visualise the
-trade-offs over the full threshold sweep.
+trade-offs over the full retrieval threshold sweep.
 
 \begin{table*}[tb]
 \caption{Endpoints: C1 (never retrieve) vs.\ C2 (always retrieve), headline
@@ -632,28 +632,20 @@ are significant (paired bootstrap, $95\%$ CI excludes $0$).}}
 \input{tables/table_endpoints}
 \end{table*}
 
-\subsection{RQ1: Retrieval is beneficial on average, but far from uniformly}
-\ugr{The C1$\rightarrow$C2 columns of Table~\ref{tab:endpoints} show that adding
-cross-file context helps on every surface and model: edit
+\subsection{RQ1: Retrieval is beneficial on average, but not  uniformly over all instances}
+\ugr{The C1 and C2 columns of Table~\ref{tab:endpoints} show that adding
+cross-file context helps on every benchmark and model: edit
 similarity rises by $+0.03$ to $+0.08$ and exact match by a few points (e.g.\
-RepoEval 1.5B: EM $0.06\rightarrow0.13$). The no-retrieve baselines are
-``correctly low'' --- the models are knowledge-limited, not broken, which we
-confirmed by manual inspection (C1 outputs are fluent but reference wrong,
-locally plausible names) --- and supplying that missing context as commented
-prompt text raises accuracy as shown in Table~\ref{tab:endpoints}.
-Figure~\ref{fig:delta} decomposes the effect per instance: always-retrieve
-\emph{helps} only 20--41\% of instances, leaves 35--66\% essentially unchanged,
-and actively \emph{hurts} 14--24\%. This matches the selective picture reported
+RepoEval 1.5B: EM $0.06\rightarrow0.13$). Figure~\ref{fig:delta} decomposes the effect per dataset for the 1.5B model: always-retrieve
+\emph{helps} only 20--41\% of instances, leaves 35--66\% unchanged,
+and \emph{hurts} 14--24\%. This matches the selective picture reported
 by Repoformer~\cite{wu2024repoformer}, where a large fraction of retrievals do
-not improve the prediction: most of the always-retrieve budget is spent on
-instances it cannot help, and a sizeable slice is harmed by it --- precisely
-what an adaptive policy should reclaim. Retrieval is therefore worth gating,
+not improve the prediction. Retrieval is therefore worth gating,
 motivating RQ2--RQ4.} \sugg{The mean C1$\rightarrow$C2 gain is significant on every
-surface and model (paired bootstrap, $95\%$ CI excluding zero;
-Section~\ref{sec:threats}).}
+surface and model (paired bootstrap, $95\%$ CI).}
 
 \sugg{\noindent\textbf{Answer (RQ1).} Cross-file retrieval helps \emph{on
-average} on every surface and model, but only a minority of instances
+average} on every benchmark and model, but only a minority of instances
 (20--41\%) actually benefit; most are unchanged and up to a quarter are
 degraded, so an always-retrieve policy wastes most of its budget ---
 selective retrieval is justified.}
@@ -790,7 +782,7 @@ to accuracy and only single-digit-percent extra retrieval (hence near-C1 latency
 cleaner benchmarks (CCE C1 $h_{A4B2}$: $0.043/0.021/0.017$; RepoEval:
 $0.084/0.053/0.018$ for 0.5B/1.5B/7B) but are noisier on the longer CCLong targets
 (7B-function $0.042 \gtrsim$ 1.5B $0.034$) --- longer, harder contexts make even the
-7B invent names, which is exactly where the gate keeps paying off. The contribution
+7B setting invent names, which is exactly where the gate keeps paying off. The contribution
 is largest in absolute terms where hallucination is largest (smaller models,
 function tasks) and is near-inert on the single-line control
 (Fig.~\ref{fig:cascade}), as intended.
