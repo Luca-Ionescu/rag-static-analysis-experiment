@@ -32,18 +32,18 @@ _DSLAB={"crosscodeeval_py":"CCE-line","repoeval_function":"RepoEval-fn",
 
 # ---- Table I: endpoints C1/C2 (ES, EM, idF1, hallA4B2, latency) ----
 rows_out=[]
-rows_out.append(r"\begin{tabular}{ll rrrr r rrrr r}")
+rows_out.append(r"\begin{tabular}{ll rrrr rrrr}")
 rows_out.append(r"\toprule")
-rows_out.append(r" & & \multicolumn{5}{c}{\textbf{C1 no-retrieve}} & \multicolumn{5}{c}{\textbf{C2 always-retrieve}}\\")
-rows_out.append(r"\cmidrule(lr){3-7}\cmidrule(lr){8-12}")
-rows_out.append(r"Dataset & M & ES & EM & idF1 & h$_{A4B2}$ & ms & ES & EM & idF1 & h$_{A4B2}$ & ms\\")
+rows_out.append(r" & & \multicolumn{4}{c}{\textbf{C1 no-retrieve}} & \multicolumn{4}{c}{\textbf{C2 always-retrieve}}\\")
+rows_out.append(r"\cmidrule(lr){3-6}\cmidrule(lr){7-10}")
+rows_out.append(r"Dataset & M & ES & EM & idF1 & h$_{A4B2}$ & ES & EM & idF1 & h$_{A4B2}$\\")
 rows_out.append(r"\midrule")
 for di,(ds,pretty,mode) in enumerate(DS):
     for mi,(tag,ml) in enumerate(MODELS):
         rws=load(tag,ds); c1=get(rws,mode,"C1_no_retrieve"); c2=get(rws,mode,"C2_always_retrieve")
         lead = f"\\multirow{{3}}{{*}}{{{pretty}}}" if mi==0 else ""
-        rows_out.append(f"{lead} & {ml} & {num(c1['edit_similarity'])} & {num(c1['exact_match'])} & {num(c1['identifier_f1'])} & {num(c1['hall_A4B2'],4)} & {F(c1['latency_ms']):.0f} & "
-                        f"{num(c2['edit_similarity'])} & {num(c2['exact_match'])} & {num(c2['identifier_f1'])} & {num(c2['hall_A4B2'],4)} & {F(c2['latency_ms']):.0f}\\\\")
+        rows_out.append(f"{lead} & {ml} & {num(c1['edit_similarity'])} & {num(c1['exact_match'])} & {num(c1['identifier_f1'])} & {num(c1['hall_A4B2'],4)} & "
+                        f"{num(c2['edit_similarity'])} & {num(c2['exact_match'])} & {num(c2['identifier_f1'])} & {num(c2['hall_A4B2'],4)}\\\\")
     rows_out.append(r"\midrule" if di<len(DS)-1 else r"\bottomrule")
 rows_out.append(r"\end{tabular}")
 open(f"{OUT}/table_endpoints.tex","w").write("\n".join(rows_out))

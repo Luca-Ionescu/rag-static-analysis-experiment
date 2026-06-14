@@ -622,7 +622,7 @@ trade-offs over the full retrieval threshold sweep.
 \begin{table*}[tb]
 \caption{Endpoints: C1 (never retrieve) vs.\ C2 (always retrieve), headline
 (truncated) scoring. ES/EM/idF1 higher is better; $h_{A4B2}$ (invented-identifier
-rate) lower is better; ms is per-instance latency under batched inference. Note
+rate) lower is better. Note
 that \ugr{C2 lifts accuracy yet $h_{A4B2}$ \emph{rises} under
 C2 in every setting: retrieval does not fix
 invented identifiers --- it amplifies them.} \sugg{All C1$\rightarrow$C2 ES gains
@@ -635,8 +635,8 @@ are significant (paired bootstrap, $95\%$ CI excludes $0$).}}
 \subsection{RQ1: Retrieval is beneficial on average, but not  uniformly over all instances}
 \ugr{The C1 and C2 columns of Table~\ref{tab:endpoints} show that adding
 cross-file context helps on every benchmark and model: edit
-similarity rises by $+0.03$ to $+0.08$ and exact match by a few points (e.g.\
-RepoEval 1.5B: EM $0.06\rightarrow0.13$). Figure~\ref{fig:delta} decomposes the effect per dataset for the 1.5B model: always-retrieve
+similarity rises by $3$--$8$ percentage points and exact match by $1$--$8$ percentage points (e.g.\
+RepoEval 1.5B: EM $6\%\rightarrow13\%$). Figure~\ref{fig:delta} decomposes the effect per dataset for the 1.5B model: always-retrieve
 \emph{helps} only 20--41\% of instances, leaves 35--66\% unchanged,
 and \emph{hurts} 14--24\%. This matches the selective picture reported
 by Repoformer~\cite{wu2024repoformer}, where a large fraction of retrievals do
